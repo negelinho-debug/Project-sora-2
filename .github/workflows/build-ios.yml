@@ -1,4 +1,4 @@
-name: Build Project Sora 2 v0.7 Near Final
+name: Build Project Sora 2 v0.7.1 Fixed
 
 on:
   workflow_dispatch:
@@ -14,10 +14,15 @@ jobs:
 
       - name: Install tools
         run: |
-          set -e
+          set -euo pipefail
           brew install xcodegen
-          python3 -m pip install --user pillow
+
+          python3 -m venv "$RUNNER_TEMP/sora2-venv"
+          "$RUNNER_TEMP/sora2-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/sora2-venv/bin/python" -m pip install pillow
+
           xcodegen --version
+          "$RUNNER_TEMP/sora2-venv/bin/python" -c "from PIL import Image; print('Pillow OK')"
 
       - name: Create Project Sora 2
         shell: bash
@@ -1364,7 +1369,7 @@ jobs:
 
           tr -d '[:space:]' < /tmp/sora_icon.b64 | base64 --decode > /tmp/sora_icon.jpg
 
-          python3 <<'PY'
+          "$RUNNER_TEMP/sora2-venv/bin/python" <<'PY'
           from PIL import Image, ImageEnhance, ImageDraw
           from pathlib import Path
 
@@ -1494,16 +1499,16 @@ jobs:
           mkdir -p Payload output
           cp -R "$APP" Payload/
 
-          /usr/bin/zip -qry output/Project-Sora-2-v0.7-Near-Final.ipa Payload
+          /usr/bin/zip -qry output/Project-Sora-2-v0.7.1-Fixed.ipa Payload
 
-          unzip -t output/Project-Sora-2-v0.7-Near-Final.ipa
-          ls -lh output/Project-Sora-2-v0.7-Near-Final.ipa
+          unzip -t output/Project-Sora-2-v0.7.1-Fixed.ipa
+          ls -lh output/Project-Sora-2-v0.7.1-Fixed.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.7-Near-Final-IPA
-          path: output/Project-Sora-2-v0.7-Near-Final.ipa
+          name: Project-Sora-2-v0.7.1-Fixed-IPA
+          path: output/Project-Sora-2-v0.7.1-Fixed.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -1511,6 +1516,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.7-build-log
+          name: Project-Sora-2-v0.7.1-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
