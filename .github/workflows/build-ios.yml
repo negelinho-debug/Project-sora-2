@@ -17,28 +17,16 @@ jobs:
           brew install xcodegen
           xcodegen --version
 
-      - name: Check cloud icon
-        run: |
-          set -e
-
-          if [ ! -f "Sora_cloud_exact_transparent.png" ]; then
-            echo "ERROR: Sora_cloud_exact_transparent.png not found"
-            exit 1
-          fi
-
-      - name: Create Project Sora 2
+      - name: Create Sora 2 project
+        shell: bash
         run: |
           set -euo pipefail
 
-          rm -rf ProjectSora2
+          rm -rf ProjectSora2 ProjectSora2.xcodeproj DerivedData Payload output
           mkdir -p ProjectSora2/Resources
           mkdir -p ProjectSora2/Assets.xcassets/AppIcon.appiconset
 
-          cp \
-            Sora_cloud_exact_transparent.png \
-            ProjectSora2/Resources/soraCloud.png
-
-          cat > project.yml <<'EOF'
+          cat > project.yml <<'PROJECTYML'
           name: ProjectSora2
 
           options:
@@ -67,12 +55,11 @@ jobs:
                   GENERATE_INFOPLIST_FILE: YES
                   INFOPLIST_KEY_CFBundleDisplayName: "Sora 2"
                   INFOPLIST_KEY_UILaunchScreen_Generation: YES
-                  INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Выберите фото для видео"
+                  INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Выберите фото для создания видео"
                   INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
-                  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-          EOF
+          PROJECTYML
 
-          cat > ProjectSora2/Main.swift <<'EOF'
+          cat > ProjectSora2/Main.swift <<'SWIFT'
           import SwiftUI
           import PhotosUI
 
@@ -87,861 +74,479 @@ jobs:
           }
 
           struct RootView: View {
-
               @State private var started = false
+              @State private var selectedTab = 0
               @State private var showCreate = false
 
               var body: some View {
-
                   ZStack {
-
                       if started {
-
-                          FeedView(
-                              showCreate: $showCreate
-                          )
-
+                          FeedView(selectedTab: $selectedTab, showCreate: $showCreate)
+                              .transition(.opacity)
                       } else {
-
                           StartView {
-
-                              withAnimation(
-                                  .easeInOut(duration: 0.3)
-                              ) {
+                              withAnimation(.easeInOut(duration: 0.25)) {
                                   started = true
                               }
                           }
+                          .transition(.opacity)
                       }
                   }
-                  .sheet(
-                      isPresented: $showCreate
-                  ) {
+                  .sheet(isPresented: $showCreate) {
                       CreateVideoView()
                   }
               }
           }
 
-
-          // =====================================================
-          // START
-          // =====================================================
-
           struct StartView: View {
-
-              let start: () -> Void
+              let onStart: () -> Void
 
               var body: some View {
-
                   ZStack {
-
                       StarBackground()
 
-                      VStack {
-
+                      VStack(spacing: 0) {
                           Spacer()
 
                           Image("soraCloud")
                               .resizable()
                               .scaledToFit()
-                              .frame(
-                                  width: 155,
-                                  height: 155
-                              )
+                              .frame(width: 152, height: 152)
 
                           Text("Sora 2")
-                              .font(
-                                  .system(
-                                      size: 48,
-                                      weight: .semibold,
-                                      design: .rounded
-                                  )
-                              )
-                              .foregroundColor(.white)
-                              .padding(.top, 8)
+                              .font(.system(size: 46, weight: .semibold, design: .rounded))
+                              .foregroundStyle(.white)
+                              .padding(.top, 12)
 
                           Spacer()
 
-                          Button(
-                              action: start
-                          ) {
-
+                          Button(action: onStart) {
                               Text("Старт")
-                                  .font(
-                                      .system(
-                                          size: 21,
-                                          weight: .semibold
-                                      )
-                                  )
-                                  .foregroundColor(.black)
-                                  .frame(
-                                      maxWidth: .infinity
-                                  )
-                                  .frame(height: 60)
+                                  .font(.system(size: 20, weight: .semibold))
+                                  .foregroundStyle(.black)
+                                  .frame(maxWidth: .infinity)
+                                  .frame(height: 58)
                                   .background(.white)
-                                  .clipShape(
-                                      Capsule()
-                                  )
+                                  .clipShape(Capsule())
                           }
                           .padding(.horizontal, 28)
-                          .padding(.bottom, 44)
+                          .padding(.bottom, 42)
                       }
                   }
               }
           }
 
-
-          // =====================================================
-          // FEED
-          // =====================================================
-
           struct FeedView: View {
-
+              @Binding var selectedTab: Int
               @Binding var showCreate: Bool
 
               var body: some View {
-
                   ZStack {
-
-                      Color.black
-                          .ignoresSafeArea()
+                      LinearGradient(
+                          colors: [
+                              Color(red: 0.06, green: 0.08, blue: 0.12),
+                              Color(red: 0.01, green: 0.02, blue: 0.04)
+                          ],
+                          startPoint: .topLeading,
+                          endPoint: .bottomTrailing
+                      )
+                      .ignoresSafeArea()
 
                       VStack(spacing: 0) {
-
                           HStack(spacing: 22) {
-
                               Text("Подписки")
-                                  .foregroundColor(
-                                      .white.opacity(0.55)
-                                  )
+                                  .foregroundStyle(.white.opacity(0.55))
+                                  .font(.system(size: 16, weight: .semibold))
 
                               Text("Для вас")
-                                  .fontWeight(.bold)
-                                  .foregroundColor(.white)
+                                  .foregroundStyle(.white)
+                                  .font(.system(size: 17, weight: .bold))
+                                  .overlay(alignment: .bottom) {
+                                      Capsule()
+                                          .fill(.white)
+                                          .frame(width: 28, height: 2)
+                                          .offset(y: 8)
+                                  }
                           }
-                          .font(.system(size: 16))
-                          .padding(.top, 10)
+                          .padding(.top, 12)
 
                           Spacer()
 
-                          ZStack(
-                              alignment: .bottom
-                          ) {
-
-                              LinearGradient(
-                                  colors: [
-                                      Color(
-                                          red: 0.04,
-                                          green: 0.12,
-                                          blue: 0.24
-                                      ),
-
-                                      Color(
-                                          red: 0.01,
-                                          green: 0.02,
-                                          blue: 0.05
+                          ZStack(alignment: .bottom) {
+                              RoundedRectangle(cornerRadius: 30, style: .continuous)
+                                  .fill(
+                                      LinearGradient(
+                                          colors: [
+                                              Color(red: 0.12, green: 0.16, blue: 0.24),
+                                              Color(red: 0.04, green: 0.05, blue: 0.08)
+                                          ],
+                                          startPoint: .top,
+                                          endPoint: .bottom
                                       )
-                                  ],
-                                  startPoint: .top,
-                                  endPoint: .bottom
-                              )
-
-                              StarBackground()
-                                  .opacity(0.8)
-
-                              VStack {
-
-                                  Spacer()
-
-                                  Image("soraCloud")
-                                      .resizable()
-                                      .scaledToFit()
-                                      .frame(
-                                          width: 120,
-                                          height: 120
-                                      )
-
-                                  Text("Sora 2")
-                                      .font(
-                                          .system(
-                                              size: 34,
-                                              weight: .semibold
-                                          )
-                                      )
-                                      .foregroundColor(.white)
-
-                                  Spacer()
-                              }
-
-                              HStack(
-                                  alignment: .bottom
-                              ) {
-
-                                  VStack(
-                                      alignment: .leading,
-                                      spacing: 7
-                                  ) {
-
-                                      Text("@project_sora2")
-                                          .fontWeight(.bold)
-
-                                      Text(
-                                          "Твои созданные видео будут появляться здесь"
-                                      )
-                                      .font(.system(size: 14))
-
-                                      HStack {
-
-                                          Image(
-                                              systemName:
-                                                  "music.note"
-                                          )
-
-                                          Text(
-                                              "Project Sora 2"
-                                          )
-                                      }
-                                      .font(.system(size: 13))
+                                  )
+                                  .overlay {
+                                      StarBackground()
+                                          .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
                                   }
-                                  .foregroundColor(.white)
+                                  .overlay {
+                                      VStack(spacing: 16) {
+                                          Image("soraCloud")
+                                              .resizable()
+                                              .scaledToFit()
+                                              .frame(width: 118, height: 118)
+
+                                          Text("Sora 2")
+                                              .font(.system(size: 32, weight: .semibold, design: .rounded))
+                                              .foregroundStyle(.white)
+
+                                          Text("Твоя лента созданных видео")
+                                              .font(.system(size: 15, weight: .medium))
+                                              .foregroundStyle(.white.opacity(0.62))
+                                      }
+                                  }
+
+                              HStack(alignment: .bottom) {
+                                  VStack(alignment: .leading, spacing: 8) {
+                                      Text("@project_sora2")
+                                          .font(.system(size: 16, weight: .bold))
+                                          .foregroundStyle(.white)
+
+                                      Text("Здесь будут появляться твои созданные видео")
+                                          .font(.system(size: 14))
+                                          .foregroundStyle(.white.opacity(0.9))
+                                          .lineLimit(2)
+
+                                      HStack(spacing: 6) {
+                                          Image(systemName: "music.note")
+                                          Text("Project Sora 2")
+                                      }
+                                      .font(.system(size: 13, weight: .medium))
+                                      .foregroundStyle(.white.opacity(0.78))
+                                  }
 
                                   Spacer()
 
                                   VStack(spacing: 20) {
-
-                                      SideButton(
-                                          icon:
-                                              "person.crop.circle.fill",
-                                          text: ""
-                                      )
-
-                                      SideButton(
-                                          icon: "heart.fill",
-                                          text: "0"
-                                      )
-
-                                      SideButton(
-                                          icon:
-                                              "bubble.right.fill",
-                                          text: "0"
-                                      )
-
-                                      SideButton(
-                                          icon:
-                                              "bookmark.fill",
-                                          text: ""
-                                      )
-
-                                      SideButton(
-                                          icon:
-                                              "arrowshape.turn.up.right.fill",
-                                          text: ""
-                                      )
+                                      ActionIcon(system: "person.crop.circle.fill", text: "")
+                                      ActionIcon(system: "heart.fill", text: "0")
+                                      ActionIcon(system: "bubble.right.fill", text: "0")
+                                      ActionIcon(system: "bookmark.fill", text: "")
+                                      ActionIcon(system: "arrowshape.turn.up.right.fill", text: "")
                                   }
                               }
                               .padding(18)
                           }
-                          .clipShape(
-                              RoundedRectangle(
-                                  cornerRadius: 28
-                              )
-                          )
-                          .padding(.horizontal, 8)
-                          .padding(.top, 14)
+                          .frame(maxHeight: .infinity)
+                          .padding(.horizontal, 10)
+                          .padding(.top, 18)
 
                           bottomBar
                       }
                   }
               }
 
-
-              var bottomBar: some View {
-
+              private var bottomBar: some View {
                   HStack {
-
-                      TabButton(
-                          icon: "house.fill",
-                          title: "Главная"
-                      )
+                      BottomItem(system: "house.fill", title: "Главная", active: selectedTab == 0) {
+                          selectedTab = 0
+                      }
 
                       Spacer()
 
-                      TabButton(
-                          icon: "safari.fill",
-                          title: "Обзор"
-                      )
+                      BottomItem(system: "safari.fill", title: "Обзор", active: selectedTab == 1) {
+                          selectedTab = 1
+                      }
 
                       Spacer()
 
                       Button {
-
                           showCreate = true
-
                       } label: {
-
                           ZStack {
+                              RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                  .fill(.white)
+                                  .frame(width: 54, height: 34)
 
-                              RoundedRectangle(
-                                  cornerRadius: 9
-                              )
-                              .fill(.white)
-                              .frame(
-                                  width: 56,
-                                  height: 36
-                              )
-
-                              Image(
-                                  systemName: "plus"
-                              )
-                              .font(
-                                  .system(
-                                      size: 20,
-                                      weight: .bold
-                                  )
-                              )
-                              .foregroundColor(.black)
+                              Image(systemName: "plus")
+                                  .font(.system(size: 20, weight: .bold))
+                                  .foregroundStyle(.black)
                           }
                       }
 
                       Spacer()
 
-                      TabButton(
-                          icon: "bell.fill",
-                          title: "Активность"
-                      )
+                      BottomItem(system: "bell.fill", title: "Активность", active: selectedTab == 3) {
+                          selectedTab = 3
+                      }
 
                       Spacer()
 
-                      TabButton(
-                          icon: "person.fill",
-                          title: "Профиль"
-                      )
+                      BottomItem(system: "person.fill", title: "Профиль", active: selectedTab == 4) {
+                          selectedTab = 4
+                      }
                   }
-                  .padding(.horizontal, 17)
+                  .padding(.horizontal, 18)
                   .padding(.top, 10)
                   .padding(.bottom, 12)
-                  .background(.black)
+                  .background(.black.opacity(0.94))
               }
           }
 
-
-          struct SideButton: View {
-
-              let icon: String
+          struct ActionIcon: View {
+              let system: String
               let text: String
 
               var body: some View {
-
-                  VStack(spacing: 3) {
-
-                      Image(
-                          systemName: icon
-                      )
-                      .font(
-                          .system(
-                              size: 28,
-                              weight: .semibold
-                          )
-                      )
+                  VStack(spacing: 4) {
+                      Image(systemName: system)
+                          .font(.system(size: 29, weight: .semibold))
+                          .foregroundStyle(.white)
+                          .shadow(radius: 2)
 
                       if !text.isEmpty {
-
                           Text(text)
-                              .font(
-                                  .system(
-                                      size: 12,
-                                      weight: .semibold
-                                  )
-                              )
+                              .font(.system(size: 12, weight: .semibold))
+                              .foregroundStyle(.white)
                       }
                   }
-                  .foregroundColor(.white)
               }
           }
 
-
-          struct TabButton: View {
-
-              let icon: String
+          struct BottomItem: View {
+              let system: String
               let title: String
+              let active: Bool
+              let action: () -> Void
 
               var body: some View {
-
-                  VStack(spacing: 3) {
-
-                      Image(
-                          systemName: icon
-                      )
-                      .font(.system(size: 19))
-
-                      Text(title)
-                          .font(.system(size: 10))
+                  Button(action: action) {
+                      VStack(spacing: 3) {
+                          Image(systemName: system)
+                              .font(.system(size: 19, weight: .semibold))
+                          Text(title)
+                              .font(.system(size: 10, weight: .medium))
+                      }
+                      .foregroundStyle(active ? .white : .white.opacity(0.60))
                   }
-                  .foregroundColor(.white)
               }
           }
-
-
-          // =====================================================
-          // CREATE VIDEO
-          // =====================================================
 
           struct CreateVideoView: View {
-
-              @Environment(\.dismiss)
-              var dismiss
-
+              @Environment(\.dismiss) private var dismiss
               @State private var prompt = ""
-
-              @State private var photo:
-                  PhotosPickerItem?
-
-              @State private var cameo = false
+              @State private var photoItem: PhotosPickerItem?
+              @State private var selectedImageData: Data?
+              @State private var cameoEnabled = false
 
               var body: some View {
+                  NavigationStack {
+                      ZStack {
+                          Color.black.ignoresSafeArea()
 
-                  ZStack {
-
-                      Color.black
-                          .ignoresSafeArea()
-
-                      VStack(spacing: 0) {
-
-                          header
-
-                          Spacer()
-
-                          VStack(spacing: 14) {
-
-                              promptBox
-
-                              HStack(spacing: 8) {
-
-                                  OptionChip(
-                                      title: "10 сек"
-                                  )
-
-                                  OptionChip(
-                                      title: "9:16"
-                                  )
-
-                                  OptionChip(
-                                      title: "1080p"
-                                  )
+                          VStack(spacing: 0) {
+                              HStack {
+                                  Button {
+                                      dismiss()
+                                  } label: {
+                                      Image(systemName: "xmark")
+                                          .font(.system(size: 18, weight: .bold))
+                                          .foregroundStyle(.white)
+                                          .frame(width: 38, height: 38)
+                                          .background(.white.opacity(0.08))
+                                          .clipShape(Circle())
+                                  }
 
                                   Spacer()
-                              }
 
-                              Button {
+                                  VStack(spacing: 1) {
+                                      Text("Создать видео")
+                                          .font(.system(size: 18, weight: .bold))
+                                          .foregroundStyle(.white)
 
-                              } label: {
-
-                                  HStack {
-
-                                      Image(
-                                          systemName: "sparkles"
-                                      )
-
-                                      Text("Создать")
+                                      Text("Sora 2")
+                                          .font(.system(size: 12, weight: .medium))
+                                          .foregroundStyle(.white.opacity(0.48))
                                   }
-                                  .font(
-                                      .system(
-                                          size: 18,
-                                          weight: .bold
-                                      )
-                                  )
-                                  .foregroundColor(.black)
-                                  .frame(
-                                      maxWidth: .infinity
-                                  )
-                                  .frame(height: 58)
-                                  .background(.white)
-                                  .clipShape(
-                                      Capsule()
-                                  )
+
+                                  Spacer()
+
+                                  Color.clear.frame(width: 38, height: 38)
                               }
+                              .padding(.horizontal, 16)
+                              .padding(.top, 8)
+
+                              Spacer()
+
+                              VStack(spacing: 14) {
+                                  ZStack(alignment: .topLeading) {
+                                      RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                          .fill(Color.white.opacity(0.055))
+                                          .overlay {
+                                              RoundedRectangle(cornerRadius: 26, style: .continuous)
+                                                  .stroke(Color.white.opacity(0.16), lineWidth: 1.2)
+                                          }
+
+                                      if prompt.isEmpty {
+                                          Text("Описание нового видео…")
+                                              .font(.system(size: 17))
+                                              .foregroundStyle(.white.opacity(0.38))
+                                              .padding(.top, 18)
+                                              .padding(.leading, 18)
+                                      }
+
+                                      TextEditor(text: $prompt)
+                                          .scrollContentBackground(.hidden)
+                                          .background(.clear)
+                                          .foregroundStyle(.white)
+                                          .font(.system(size: 17))
+                                          .padding(.horizontal, 12)
+                                          .padding(.top, 10)
+                                          .padding(.bottom, 58)
+
+                                      HStack(spacing: 10) {
+                                          PhotosPicker(selection: $photoItem, matching: .images) {
+                                              HStack(spacing: 7) {
+                                                  Image(systemName: "photo")
+                                                  Text(selectedImageData == nil ? "Фото" : "Фото добавлено")
+                                              }
+                                              .font(.system(size: 14, weight: .semibold))
+                                              .foregroundStyle(.white)
+                                              .padding(.horizontal, 12)
+                                              .frame(height: 38)
+                                              .background(.white.opacity(0.09))
+                                              .clipShape(Capsule())
+                                          }
+
+                                          Button {
+                                              cameoEnabled.toggle()
+                                          } label: {
+                                              HStack(spacing: 7) {
+                                                  Image(systemName: "person.2.fill")
+                                                  Text("Камео")
+                                              }
+                                              .font(.system(size: 14, weight: .semibold))
+                                              .foregroundStyle(.white)
+                                              .padding(.horizontal, 12)
+                                              .frame(height: 38)
+                                              .background(cameoEnabled ? .white.opacity(0.20) : .white.opacity(0.09))
+                                              .clipShape(Capsule())
+                                          }
+
+                                          Spacer()
+
+                                          Image(systemName: "waveform")
+                                              .font(.system(size: 17, weight: .semibold))
+                                              .foregroundStyle(.white.opacity(0.70))
+                                              .frame(width: 38, height: 38)
+                                              .background(.white.opacity(0.09))
+                                              .clipShape(Circle())
+                                      }
+                                      .padding(.horizontal, 14)
+                                      .padding(.bottom, 12)
+                                      .frame(maxHeight: .infinity, alignment: .bottom)
+                                  }
+                                  .frame(height: 210)
+
+                                  HStack(spacing: 8) {
+                                      Chip(text: "10 сек")
+                                      Chip(text: "9:16")
+                                      Chip(text: "1080p")
+                                      Spacer()
+                                  }
+
+                                  Button {
+                                  } label: {
+                                      HStack(spacing: 9) {
+                                          Image(systemName: "sparkles")
+                                          Text("Создать")
+                                      }
+                                      .font(.system(size: 18, weight: .bold))
+                                      .foregroundStyle(.black)
+                                      .frame(maxWidth: .infinity)
+                                      .frame(height: 56)
+                                      .background(.white)
+                                      .clipShape(Capsule())
+                                  }
+                              }
+                              .padding(.horizontal, 16)
+                              .padding(.bottom, 20)
                           }
-                          .padding(.horizontal, 15)
-                          .padding(.bottom, 18)
+                      }
+                      .task(id: photoItem) {
+                          if let photoItem {
+                              selectedImageData = try? await photoItem.loadTransferable(type: Data.self)
+                          }
                       }
                   }
-              }
-
-
-              var header: some View {
-
-                  HStack {
-
-                      Button {
-
-                          dismiss()
-
-                      } label: {
-
-                          Image(
-                              systemName: "xmark"
-                          )
-                          .font(
-                              .system(
-                                  size: 17,
-                                  weight: .bold
-                              )
-                          )
-                          .foregroundColor(.white)
-                          .frame(
-                              width: 38,
-                              height: 38
-                          )
-                          .background(
-                              .white.opacity(0.08)
-                          )
-                          .clipShape(
-                              Circle()
-                          )
-                      }
-
-                      Spacer()
-
-                      VStack(spacing: 2) {
-
-                          Text("Создать видео")
-                              .font(
-                                  .system(
-                                      size: 18,
-                                      weight: .bold
-                                  )
-                              )
-
-                          Text("Sora 2")
-                              .font(
-                                  .system(size: 12)
-                              )
-                              .foregroundColor(
-                                  .white.opacity(0.48)
-                              )
-                      }
-                      .foregroundColor(.white)
-
-                      Spacer()
-
-                      Color.clear
-                          .frame(
-                              width: 38,
-                              height: 38
-                          )
-                  }
-                  .padding(.horizontal, 15)
-                  .padding(.top, 8)
-              }
-
-
-              var promptBox: some View {
-
-                  ZStack(
-                      alignment: .topLeading
-                  ) {
-
-                      RoundedRectangle(
-                          cornerRadius: 26
-                      )
-                      .fill(
-                          Color.white.opacity(0.05)
-                      )
-                      .overlay {
-
-                          RoundedRectangle(
-                              cornerRadius: 26
-                          )
-                          .stroke(
-                              Color.white.opacity(0.20),
-                              lineWidth: 1.2
-                          )
-                      }
-
-                      if prompt.isEmpty {
-
-                          Text(
-                              "Описание нового видео…"
-                          )
-                          .font(.system(size: 17))
-                          .foregroundColor(
-                              .white.opacity(0.38)
-                          )
-                          .padding(.top, 18)
-                          .padding(.leading, 18)
-                      }
-
-                      TextEditor(
-                          text: $prompt
-                      )
-                      .scrollContentBackground(.hidden)
-                      .background(.clear)
-                      .foregroundColor(.white)
-                      .font(.system(size: 17))
-                      .padding(.horizontal, 12)
-                      .padding(.top, 9)
-                      .padding(.bottom, 58)
-
-                      HStack(spacing: 9) {
-
-                          PhotosPicker(
-                              selection: $photo,
-                              matching: .images
-                          ) {
-
-                              HStack(spacing: 6) {
-
-                                  Image(
-                                      systemName: "photo"
-                                  )
-
-                                  Text("Фото")
-                              }
-                              .font(
-                                  .system(
-                                      size: 14,
-                                      weight: .semibold
-                                  )
-                              )
-                              .foregroundColor(.white)
-                              .padding(
-                                  .horizontal,
-                                  12
-                              )
-                              .frame(height: 38)
-                              .background(
-                                  .white.opacity(0.09)
-                              )
-                              .clipShape(
-                                  Capsule()
-                              )
-                          }
-
-                          Button {
-
-                              cameo.toggle()
-
-                          } label: {
-
-                              HStack(spacing: 6) {
-
-                                  Image(
-                                      systemName:
-                                          "person.2.fill"
-                                  )
-
-                                  Text("Камео")
-                              }
-                              .font(
-                                  .system(
-                                      size: 14,
-                                      weight: .semibold
-                                  )
-                              )
-                              .foregroundColor(.white)
-                              .padding(
-                                  .horizontal,
-                                  12
-                              )
-                              .frame(height: 38)
-                              .background(
-                                  cameo
-                                  ? .white.opacity(0.2)
-                                  : .white.opacity(0.09)
-                              )
-                              .clipShape(
-                                  Capsule()
-                              )
-                          }
-
-                          Spacer()
-
-                          Image(
-                              systemName: "waveform"
-                          )
-                          .foregroundColor(
-                              .white.opacity(0.75)
-                          )
-                          .frame(
-                              width: 38,
-                              height: 38
-                          )
-                          .background(
-                              .white.opacity(0.09)
-                          )
-                          .clipShape(
-                              Circle()
-                          )
-                      }
-                      .padding(.horizontal, 13)
-                      .padding(.bottom, 11)
-                      .frame(
-                          maxHeight: .infinity,
-                          alignment: .bottom
-                      )
-                  }
-                  .frame(height: 215)
               }
           }
 
-
-          struct OptionChip: View {
-
-              let title: String
+          struct Chip: View {
+              let text: String
 
               var body: some View {
-
-                  Text(title)
-                      .font(
-                          .system(
-                              size: 13,
-                              weight: .semibold
-                          )
-                      )
-                      .foregroundColor(.white)
-                      .padding(
-                          .horizontal,
-                          12
-                      )
+                  Text(text)
+                      .font(.system(size: 13, weight: .semibold))
+                      .foregroundStyle(.white.opacity(0.9))
+                      .padding(.horizontal, 11)
                       .frame(height: 34)
-                      .background(
-                          .white.opacity(0.08)
-                      )
-                      .clipShape(
-                          Capsule()
-                      )
+                      .background(.white.opacity(0.08))
+                      .clipShape(Capsule())
               }
           }
 
-
-          // =====================================================
-          // BACKGROUND
-          // =====================================================
-
           struct StarBackground: View {
-
-              let stars:
-                  [(Double, Double, Double)] = [
-
-                  (0.07,0.08,2),
-                  (0.18,0.16,1),
-                  (0.31,0.09,2),
-                  (0.45,0.20,1),
-                  (0.63,0.08,2),
-                  (0.84,0.16,1),
-
-                  (0.11,0.35,1),
-                  (0.27,0.29,2),
-                  (0.48,0.39,1),
-                  (0.71,0.31,2),
-                  (0.91,0.40,1),
-
-                  (0.07,0.56,2),
-                  (0.24,0.63,1),
-                  (0.43,0.54,2),
-                  (0.66,0.63,1),
-                  (0.88,0.57,2),
-
-                  (0.15,0.79,2),
-                  (0.35,0.85,1),
-                  (0.59,0.76,2),
-                  (0.82,0.87,1)
+              private let stars: [(CGFloat, CGFloat, CGFloat, Double)] = [
+                  (0.05,0.07,1.5,0.70),(0.17,0.16,1.0,0.62),(0.29,0.09,1.7,0.75),
+                  (0.44,0.19,1.1,0.60),(0.62,0.08,1.3,0.68),(0.84,0.16,1.7,0.76),
+                  (0.11,0.34,1.1,0.64),(0.27,0.29,1.4,0.71),(0.48,0.38,1.0,0.55),
+                  (0.70,0.31,1.6,0.73),(0.92,0.39,1.1,0.61),(0.07,0.55,1.5,0.70),
+                  (0.23,0.63,1.0,0.57),(0.42,0.54,1.6,0.74),(0.65,0.62,1.2,0.65),
+                  (0.88,0.57,1.0,0.56),(0.15,0.79,1.6,0.73),(0.34,0.84,1.0,0.58),
+                  (0.59,0.76,1.4,0.69),(0.81,0.87,1.2,0.64),(0.95,0.74,1.0,0.57)
               ]
 
               var body: some View {
-
-                  GeometryReader { geometry in
-
+                  GeometryReader { geo in
                       ZStack {
-
                           LinearGradient(
                               colors: [
-
-                                  Color(
-                                      red: 0.002,
-                                      green: 0.025,
-                                      blue: 0.07
-                                  ),
-
-                                  Color(
-                                      red: 0.005,
-                                      green: 0.075,
-                                      blue: 0.17
-                                  ),
-
-                                  Color(
-                                      red: 0.002,
-                                      green: 0.02,
-                                      blue: 0.055
-                                  )
+                                  Color(red: 0.005, green: 0.035, blue: 0.09),
+                                  Color(red: 0.005, green: 0.075, blue: 0.17),
+                                  Color(red: 0.002, green: 0.025, blue: 0.065)
                               ],
                               startPoint: .top,
                               endPoint: .bottom
                           )
 
-                          ForEach(
-                              0..<stars.count,
-                              id: \.self
-                          ) { index in
-
+                          ForEach(Array(stars.enumerated()), id: \.offset) { _, star in
                               Circle()
-                                  .fill(
-                                      Color.white.opacity(
-                                          0.72
-                                      )
-                                  )
-                                  .frame(
-                                      width:
-                                          stars[index].2,
-
-                                      height:
-                                          stars[index].2
-                                  )
+                                  .fill(.white.opacity(star.3))
+                                  .frame(width: star.2, height: star.2)
                                   .position(
-
-                                      x:
-                                          geometry
-                                              .size
-                                              .width
-                                          * stars[index].0,
-
-                                      y:
-                                          geometry
-                                              .size
-                                              .height
-                                          * stars[index].1
+                                      x: geo.size.width * star.0,
+                                      y: geo.size.height * star.1
                                   )
                           }
                       }
+                      .ignoresSafeArea()
                   }
-                  .ignoresSafeArea()
               }
           }
-          EOF
+          SWIFT
 
-          # ======================================================
-          # APP ICON
-          # ======================================================
+          cat > /tmp/sora_cloud.b64 <<'ICONB64'
+          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
+          ICONB64
 
-          sips \
-            -s format jpeg \
-            Sora_cloud_exact_transparent.png \
-            --out /tmp/cloud.jpg \
-            >/dev/null
+          tr -d '[:space:]' < /tmp/sora_cloud.b64 | base64 --decode > ProjectSora2/Resources/soraCloud.png
 
-          sips \
-            --padToHeightWidth 1024 1024 \
-            --padColor 07152B \
-            /tmp/cloud.jpg \
-            --out /tmp/icon.jpg \
-            >/dev/null
+          # Build a non-alpha 1024x1024 icon from the same cloud picture.
+          sips -s format jpeg ProjectSora2/Resources/soraCloud.png --out /tmp/cloud.jpg >/dev/null
+          sips --padToHeightWidth 1024 1024 --padColor 07152B /tmp/cloud.jpg --out /tmp/icon-square.jpg >/dev/null
+          sips -s format png /tmp/icon-square.jpg --out ProjectSora2/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png >/dev/null
 
-          sips \
-            -s format png \
-            /tmp/icon.jpg \
-            --out ProjectSora2/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
-            >/dev/null
-
-          cat > ProjectSora2/Assets.xcassets/AppIcon.appiconset/Contents.json <<'EOF'
+          cat > ProjectSora2/Assets.xcassets/AppIcon.appiconset/Contents.json <<'JSON'
           {
             "images": [
               {
@@ -956,26 +561,27 @@ jobs:
               "version": 1
             }
           }
-          EOF
+          JSON
 
-          cat > ProjectSora2/Assets.xcassets/Contents.json <<'EOF'
+          cat > ProjectSora2/Assets.xcassets/Contents.json <<'JSON'
           {
             "info": {
               "author": "xcode",
               "version": 1
             }
           }
-          EOF
+          JSON
+
+          echo "===== FILES ====="
+          find ProjectSora2 -maxdepth 4 -type f -print
 
       - name: Generate Xcode project
         run: |
-          set -e
+          set -euo pipefail
           xcodegen generate
-          xcodebuild \
-            -project ProjectSora2.xcodeproj \
-            -list
+          xcodebuild -project ProjectSora2.xcodeproj -list
 
-      - name: Build iPhone app
+      - name: Build unsigned app
         run: |
           set -euo pipefail
 
@@ -989,6 +595,7 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
             IPHONEOS_DEPLOYMENT_TARGET=16.0 \
+            ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
@@ -999,39 +606,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          APP="$(
-            find \
-              "$PWD/DerivedData/Build/Products/Release-iphoneos" \
-              -maxdepth 1 \
-              -type d \
-              -name "*.app" \
-              | head -1
-          )"
+          APP="$(find "$PWD/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name "*.app" | head -1)"
 
           if [ -z "$APP" ]; then
-            echo "ERROR: app not found"
+            echo "ERROR: built .app not found"
             exit 1
           fi
 
           rm -rf Payload output
-
-          mkdir -p Payload
-          mkdir -p output
-
+          mkdir -p Payload output
           cp -R "$APP" Payload/
 
-          /usr/bin/zip \
-            -qry \
-            output/Project-Sora-2-v0.6.ipa \
-            Payload
-
-          unzip \
-            -t \
-            output/Project-Sora-2-v0.6.ipa
-
-          ls \
-            -lh \
-            output/Project-Sora-2-v0.6.ipa
+          /usr/bin/zip -qry output/Project-Sora-2-v0.6.ipa Payload
+          unzip -t output/Project-Sora-2-v0.6.ipa
+          ls -lh output/Project-Sora-2-v0.6.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
@@ -1041,10 +629,10 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      - name: Upload log if failed
+      - name: Upload build log if failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Sora-2-v0.6-build-log
+          name: Project-Sora-2-v0.6-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
