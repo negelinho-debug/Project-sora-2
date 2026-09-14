@@ -1,4 +1,4 @@
-name: Build Project Sora 2 v0.8 Near Final
+name: Build Project Sora 2 v0.9 Video Engine
 
 on:
   workflow_dispatch:
@@ -84,14 +84,16 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
               <key>CFBundleShortVersionString</key>
-              <string>0.8</string>
+              <string>0.9</string>
               <key>CFBundleVersion</key>
-              <string>8</string>
+              <string>9</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
               <key>NSPhotoLibraryUsageDescription</key>
               <string>Выберите фото для создания видео</string>
+              <key>NSPhotoLibraryAddUsageDescription</key>
+              <string>Сохраняйте готовые видео Project Sora 2 в Фото</string>
               <key>UILaunchScreen</key>
               <dict/>
               <key>UISupportedInterfaceOrientations</key>
@@ -171,6 +173,9 @@ jobs:
           cat > ProjectSora2/Main.swift <<'SWIFT'
           import SwiftUI
           import PhotosUI
+          import Photos
+          import AVKit
+          import UniformTypeIdentifiers
           import UIKit
 
           @main
@@ -194,6 +199,7 @@ jobs:
               @Published var lastPrompt: String
               @Published var selectedIcon: String
               @Published var unlockedEventIcons: Set<String>
+              @Published var localVideos: [LocalVideo]
 
               init() {
                   let d = UserDefaults.standard
@@ -204,6 +210,13 @@ jobs:
                   self.lastPrompt = d.string(forKey: "lastPrompt") ?? ""
                   self.selectedIcon = d.string(forKey: "selectedIcon") ?? "Original"
                   self.unlockedEventIcons = Set(d.stringArray(forKey: "unlockedEventIcons") ?? [])
+
+                  if let data = d.data(forKey: "localVideos"),
+                     let decoded = try? JSONDecoder().decode([LocalVideo].self, from: data) {
+                      self.localVideos = decoded
+                  } else {
+                      self.localVideos = []
+                  }
               }
 
               func createProfile(_ name: String) {
@@ -249,6 +262,72 @@ jobs:
                   d.set(lastPrompt, forKey: "lastPrompt")
                   d.set(selectedIcon, forKey: "selectedIcon")
                   d.set(Array(unlockedEventIcons).sorted(), forKey: "unlockedEventIcons")
+
+                  if let data = try? JSONEncoder().encode(localVideos) {
+                      d.set(data, forKey: "localVideos")
+                  }
+              }
+
+              func videoURL(for item: LocalVideo) -> URL? {
+                  guard let base = FileManager.default.urls(
+                      for: .documentDirectory,
+                      in: .userDomainMask
+                  ).first else { return nil }
+
+                  return base
+                      .appendingPathComponent("SoraVideos", isDirectory: true)
+                      .appendingPathComponent(item.fileName)
+              }
+
+              @discardableResult
+              func importVideo(from sourceURL: URL, prompt: String) throws -> LocalVideo {
+                  guard let base = FileManager.default.urls(
+                      for: .documentDirectory,
+                      in: .userDomainMask
+                  ).first else {
+                      throw NSError(
+                          domain: "ProjectSora2",
+                          code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Не удалось открыть Documents."]
+                      )
+                  }
+
+                  let folder = base.appendingPathComponent("SoraVideos", isDirectory: true)
+                  try FileManager.default.createDirectory(
+                      at: folder,
+                      withIntermediateDirectories: true
+                  )
+
+                  let ext = sourceURL.pathExtension.isEmpty ? "mp4" : sourceURL.pathExtension
+                  let fileName = UUID().uuidString + "." + ext
+                  let destination = folder.appendingPathComponent(fileName)
+
+                  let accessed = sourceURL.startAccessingSecurityScopedResource()
+                  defer {
+                      if accessed {
+                          sourceURL.stopAccessingSecurityScopedResource()
+                      }
+                  }
+
+                  if FileManager.default.fileExists(atPath: destination.path) {
+                      try FileManager.default.removeItem(at: destination)
+                  }
+
+                  try FileManager.default.copyItem(at: sourceURL, to: destination)
+
+                  let clean = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+                  let item = LocalVideo(
+                      id: UUID(),
+                      fileName: fileName,
+                      prompt: clean.isEmpty ? "Готовое видео" : clean,
+                      createdAt: Date()
+                  )
+
+                  localVideos.insert(item, at: 0)
+                  videoCount += 1
+                  lastPrompt = item.prompt
+                  save()
+                  return item
               }
 
               func isEventActive(_ eventID: String, date: Date = Date()) -> Bool {
@@ -397,6 +476,13 @@ jobs:
                   count += unlockedEventIcons.count
                   return count
               }
+          }
+
+          struct LocalVideo: Identifiable, Codable, Equatable {
+              let id: UUID
+              let fileName: String
+              let prompt: String
+              let createdAt: Date
           }
 
           struct Achievement: Identifiable {
@@ -647,6 +733,11 @@ jobs:
 
           struct HomeFeedView: View {
               @EnvironmentObject var model: AppModel
+              @State private var saveMessage = ""
+
+              private var latestVideo: LocalVideo? {
+                  model.localVideos.first
+              }
 
               var body: some View {
                   ZStack {
@@ -674,52 +765,105 @@ jobs:
 
                           ZStack(alignment: .bottom) {
                               RoundedRectangle(cornerRadius: 30, style: .continuous)
-                                  .fill(
-                                      LinearGradient(
-                                          colors: [
-                                              Color(red: 0.01, green: 0.08, blue: 0.17),
-                                              Color(red: 0.00, green: 0.02, blue: 0.05)
-                                          ],
-                                          startPoint: .top,
-                                          endPoint: .bottom
+                                  .fill(Color(red: 0.005, green: 0.025, blue: 0.055))
+
+                              if let latestVideo,
+                                 let url = model.videoURL(for: latestVideo) {
+                                  LocalVideoPlayerView(url: url)
+                                      .clipShape(
+                                          RoundedRectangle(
+                                              cornerRadius: 30,
+                                              style: .continuous
+                                          )
                                       )
-                                  )
-                                  .overlay {
-                                      MiniStars()
-                                          .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                                  }
+                              } else {
+                                  RoundedRectangle(cornerRadius: 30, style: .continuous)
+                                      .fill(
+                                          LinearGradient(
+                                              colors: [
+                                                  Color(red: 0.01, green: 0.08, blue: 0.17),
+                                                  Color(red: 0.00, green: 0.02, blue: 0.05)
+                                              ],
+                                              startPoint: .top,
+                                              endPoint: .bottom
+                                          )
+                                      )
+                                      .overlay {
+                                          MiniStars()
+                                              .clipShape(
+                                                  RoundedRectangle(
+                                                      cornerRadius: 30,
+                                                      style: .continuous
+                                                  )
+                                              )
+                                      }
 
-                              VStack(spacing: 14) {
-                                  Spacer()
+                                  VStack(spacing: 14) {
+                                      Spacer()
 
-                                  Image("AppIconPreview")
-                                      .resizable()
-                                      .scaledToFit()
-                                      .frame(width: 110, height: 110)
-                                      .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                                      Image("AppIconPreview")
+                                          .resizable()
+                                          .scaledToFit()
+                                          .frame(width: 110, height: 110)
+                                          .clipShape(
+                                              RoundedRectangle(
+                                                  cornerRadius: 28,
+                                                  style: .continuous
+                                              )
+                                          )
 
-                                  Text("Sora 2")
-                                      .font(.system(size: 36, weight: .semibold, design: .rounded))
-                                      .foregroundStyle(.white)
+                                      Text("Sora 2")
+                                          .font(
+                                              .system(
+                                                  size: 36,
+                                                  weight: .semibold,
+                                                  design: .rounded
+                                              )
+                                          )
+                                          .foregroundStyle(.white)
 
-                                  Text(model.videoCount == 0 ? "Создай первое видео через +" : model.lastPrompt)
+                                      Text(
+                                          model.videoCount == 0
+                                          ? "Нажми + и добавь первое видео"
+                                          : model.lastPrompt
+                                      )
                                       .font(.system(size: 16, weight: .medium))
                                       .foregroundStyle(.white.opacity(0.62))
                                       .multilineTextAlignment(.center)
                                       .padding(.horizontal, 38)
 
-                                  Spacer()
+                                      Spacer()
+                                  }
                               }
+
+                              LinearGradient(
+                                  colors: [.clear, .black.opacity(0.72)],
+                                  startPoint: .center,
+                                  endPoint: .bottom
+                              )
+                              .clipShape(
+                                  RoundedRectangle(
+                                      cornerRadius: 30,
+                                      style: .continuous
+                                  )
+                              )
+                              .allowsHitTesting(false)
 
                               HStack(alignment: .bottom) {
                                   VStack(alignment: .leading, spacing: 7) {
-                                      Text("@\(model.username.isEmpty ? "project_sora2" : model.username)")
-                                          .font(.system(size: 16, weight: .bold))
+                                      Text(
+                                          "@\(model.username.isEmpty ? "project_sora2" : model.username)"
+                                      )
+                                      .font(.system(size: 16, weight: .bold))
 
-                                      Text(model.videoCount == 0
-                                           ? "Твоя лента созданных видео"
-                                           : "Локальное задание #\(model.videoCount)")
-                                          .font(.system(size: 14))
+                                      Text(
+                                          latestVideo == nil
+                                          ? (model.videoCount == 0
+                                             ? "Твоя лента созданных видео"
+                                             : "Задание ожидает генератор")
+                                          : latestVideo!.prompt
+                                      )
+                                      .font(.system(size: 14))
 
                                       HStack(spacing: 6) {
                                           Image(systemName: "music.note")
@@ -732,11 +876,29 @@ jobs:
                                   Spacer()
 
                                   VStack(spacing: 20) {
-                                      FeedAction(icon: "person.crop.circle.fill", text: "")
+                                      FeedAction(
+                                          icon: "person.crop.circle.fill",
+                                          text: ""
+                                      )
                                       FeedAction(icon: "heart.fill", text: "0")
                                       FeedAction(icon: "bubble.right.fill", text: "0")
                                       FeedAction(icon: "bookmark.fill", text: "")
-                                      FeedAction(icon: "arrowshape.turn.up.right.fill", text: "")
+
+                                      if let latestVideo,
+                                         let url = model.videoURL(for: latestVideo) {
+                                          Button {
+                                              saveVideoToPhotos(url)
+                                          } label: {
+                                              Image(systemName: "square.and.arrow.down.fill")
+                                                  .font(.system(size: 27, weight: .semibold))
+                                                  .foregroundStyle(.white)
+                                          }
+                                      }
+
+                                      FeedAction(
+                                          icon: "arrowshape.turn.up.right.fill",
+                                          text: ""
+                                      )
                                   }
                               }
                               .padding(18)
@@ -745,6 +907,65 @@ jobs:
                           .padding(.bottom, 8)
                       }
                   }
+                  .alert(
+                      "Sora 2",
+                      isPresented: Binding(
+                          get: { !saveMessage.isEmpty },
+                          set: { if !$0 { saveMessage = "" } }
+                      )
+                  ) {
+                      Button("ОК") { saveMessage = "" }
+                  } message: {
+                      Text(saveMessage)
+                  }
+              }
+
+              private func saveVideoToPhotos(_ url: URL) {
+                  PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                      guard status == .authorized || status == .limited else {
+                          DispatchQueue.main.async {
+                              saveMessage = "Нет доступа к сохранению в Фото."
+                          }
+                          return
+                      }
+
+                      PHPhotoLibrary.shared().performChanges {
+                          PHAssetChangeRequest.creationRequestForAssetFromVideo(
+                              atFileURL: url
+                          )
+                      } completionHandler: { success, error in
+                          DispatchQueue.main.async {
+                              if success {
+                                  saveMessage = "Видео сохранено в Фото."
+                              } else {
+                                  saveMessage = error?.localizedDescription
+                                      ?? "Не удалось сохранить видео."
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          struct LocalVideoPlayerView: View {
+              let url: URL
+              @State private var player: AVPlayer
+
+              init(url: URL) {
+                  self.url = url
+                  _player = State(initialValue: AVPlayer(url: url))
+              }
+
+              var body: some View {
+                  VideoPlayer(player: player)
+                      .background(.black)
+                      .onAppear {
+                          player.isMuted = false
+                          player.play()
+                      }
+                      .onDisappear {
+                          player.pause()
+                      }
               }
           }
 
@@ -1319,7 +1540,11 @@ jobs:
               @State private var ratio = "9:16"
               @State private var quality = "1080p"
               @State private var cameo = false
-              @State private var showCreated = false
+
+              @State private var showMovieImporter = false
+              @State private var dialogTitle = ""
+              @State private var dialogMessage = ""
+              @State private var showDialog = false
 
               var body: some View {
                   NavigationStack {
@@ -1344,7 +1569,7 @@ jobs:
                                   VStack(spacing: 1) {
                                       Text("Создать видео")
                                           .font(.system(size: 18, weight: .bold))
-                                      Text("Sora 2")
+                                      Text("Sora 2 • Video Engine")
                                           .font(.system(size: 12, weight: .medium))
                                           .foregroundStyle(.white.opacity(0.46))
                                   }
@@ -1364,8 +1589,14 @@ jobs:
                                       RoundedRectangle(cornerRadius: 26, style: .continuous)
                                           .fill(.white.opacity(0.05))
                                           .overlay {
-                                              RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                                  .stroke(.white.opacity(0.18), lineWidth: 1.2)
+                                              RoundedRectangle(
+                                                  cornerRadius: 26,
+                                                  style: .continuous
+                                              )
+                                              .stroke(
+                                                  .white.opacity(0.18),
+                                                  lineWidth: 1.2
+                                              )
                                           }
 
                                       if prompt.isEmpty {
@@ -1386,7 +1617,10 @@ jobs:
                                           .padding(.bottom, 64)
 
                                       HStack(spacing: 9) {
-                                          PhotosPicker(selection: $photoItem, matching: .images) {
+                                          PhotosPicker(
+                                              selection: $photoItem,
+                                              matching: .images
+                                          ) {
                                               HStack(spacing: 6) {
                                                   Image(systemName: "photo")
                                                   Text(hasPhoto ? "Фото ✓" : "Фото")
@@ -1410,7 +1644,11 @@ jobs:
                                               .foregroundStyle(.white)
                                               .padding(.horizontal, 12)
                                               .frame(height: 38)
-                                              .background(cameo ? .white.opacity(0.20) : .white.opacity(0.09))
+                                              .background(
+                                                  cameo
+                                                  ? .white.opacity(0.20)
+                                                  : .white.opacity(0.09)
+                                              )
                                               .clipShape(Capsule())
                                           }
 
@@ -1424,35 +1662,68 @@ jobs:
                                       }
                                       .padding(.horizontal, 13)
                                       .padding(.bottom, 11)
-                                      .frame(maxHeight: .infinity, alignment: .bottom)
+                                      .frame(
+                                          maxHeight: .infinity,
+                                          alignment: .bottom
+                                      )
                                   }
                                   .frame(height: 220)
 
                                   HStack(spacing: 8) {
                                       SelectorChip(title: duration) {
-                                          duration = duration == "10 сек" ? "5 сек" : "10 сек"
+                                          duration = duration == "10 сек"
+                                              ? "5 сек"
+                                              : "10 сек"
                                       }
 
                                       SelectorChip(title: ratio) {
-                                          ratio = ratio == "9:16" ? "16:9" : (ratio == "16:9" ? "1:1" : "9:16")
+                                          ratio = ratio == "9:16"
+                                              ? "16:9"
+                                              : (ratio == "16:9" ? "1:1" : "9:16")
                                       }
 
                                       SelectorChip(title: quality) {
-                                          quality = quality == "1080p" ? "720p" : "1080p"
+                                          quality = quality == "1080p"
+                                              ? "720p"
+                                              : "1080p"
                                       }
 
                                       Spacer()
                                   }
 
-                                  Text("Пока это локальная версия: кнопка создаёт задание и ачивки. Реальный генератор подключим к backend/API.")
-                                      .font(.system(size: 11))
-                                      .foregroundStyle(.white.opacity(0.34))
-                                      .multilineTextAlignment(.center)
-                                      .padding(.horizontal, 14)
+                                  Button {
+                                      showMovieImporter = true
+                                  } label: {
+                                      HStack(spacing: 9) {
+                                          Image(systemName: "film.fill")
+                                          Text("Добавить готовое видео в ленту")
+                                      }
+                                      .font(.system(size: 15, weight: .bold))
+                                      .foregroundStyle(.white)
+                                      .frame(maxWidth: .infinity)
+                                      .frame(height: 48)
+                                      .background(.white.opacity(0.09))
+                                      .clipShape(Capsule())
+                                  }
+
+                                  Text(
+                                      "Импорт MP4 уже работает. Кнопка «Создать» подготовлена под настоящий backend/API и не выдаёт заглушку за сгенерированное видео."
+                                  )
+                                  .font(.system(size: 11))
+                                  .foregroundStyle(.white.opacity(0.34))
+                                  .multilineTextAlignment(.center)
+                                  .padding(.horizontal, 14)
 
                                   Button {
-                                      model.recordCreate(prompt: prompt, hasPhoto: hasPhoto)
-                                      showCreated = true
+                                      model.recordCreate(
+                                          prompt: prompt,
+                                          hasPhoto: hasPhoto
+                                      )
+
+                                      dialogTitle = "Генератор готов к подключению"
+                                      dialogMessage =
+                                          "Интерфейс и очередь готовы. Для настоящей AI-генерации нужен backend/API видеомодели. Пока можешь импортировать готовый MP4 и полностью проверить ленту, проигрывание и сохранение."
+                                      showDialog = true
                                   } label: {
                                       HStack(spacing: 8) {
                                           Image(systemName: "sparkles")
@@ -1472,14 +1743,50 @@ jobs:
                       }
                       .task(id: photoItem) {
                           if let photoItem {
-                              let data = try? await photoItem.loadTransferable(type: Data.self)
+                              let data = try? await photoItem.loadTransferable(
+                                  type: Data.self
+                              )
                               hasPhoto = data != nil
                           }
                       }
-                      .alert("Задание создано", isPresented: $showCreated) {
-                          Button("Готово") { dismiss() }
+                      .fileImporter(
+                          isPresented: $showMovieImporter,
+                          allowedContentTypes: [.movie],
+                          allowsMultipleSelection: false
+                      ) { result in
+                          switch result {
+                          case .success(let urls):
+                              guard let url = urls.first else { return }
+
+                              do {
+                                  _ = try model.importVideo(
+                                      from: url,
+                                      prompt: prompt
+                                  )
+                                  dialogTitle = "Видео добавлено"
+                                  dialogMessage =
+                                      "Настоящий видеофайл скопирован внутрь Sora 2 и теперь отображается в ленте."
+                                  showDialog = true
+                              } catch {
+                                  dialogTitle = "Ошибка импорта"
+                                  dialogMessage = error.localizedDescription
+                                  showDialog = true
+                              }
+
+                          case .failure(let error):
+                              dialogTitle = "Ошибка выбора видео"
+                              dialogMessage = error.localizedDescription
+                              showDialog = true
+                          }
+                      }
+                      .alert(dialogTitle, isPresented: $showDialog) {
+                          Button("ОК") {
+                              if dialogTitle == "Видео добавлено" {
+                                  dismiss()
+                              }
+                          }
                       } message: {
-                          Text("Оно появилось в ленте и прогресс ачивок обновлён.")
+                          Text(dialogMessage)
                       }
                   }
               }
@@ -1742,16 +2049,16 @@ jobs:
           mkdir -p Payload output
           cp -R "$APP" Payload/
 
-          /usr/bin/zip -qry output/Project-Sora-2-v0.8-Near-Final.ipa Payload
+          /usr/bin/zip -qry output/Project-Sora-2-v0.9-Video-Engine.ipa Payload
 
-          unzip -t output/Project-Sora-2-v0.8-Near-Final.ipa
-          ls -lh output/Project-Sora-2-v0.8-Near-Final.ipa
+          unzip -t output/Project-Sora-2-v0.9-Video-Engine.ipa
+          ls -lh output/Project-Sora-2-v0.9-Video-Engine.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.8-Near-Final-IPA
-          path: output/Project-Sora-2-v0.8-Near-Final.ipa
+          name: Project-Sora-2-v0.9-Video-Engine-IPA
+          path: output/Project-Sora-2-v0.9-Video-Engine.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -1759,6 +2066,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.8-build-log
+          name: Project-Sora-2-v0.9-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
