@@ -1,1521 +1,188 @@
-name: Build Project Sora 2 v0.7.1 Fixed
-
-on:
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: macos-latest
-    timeout-minutes: 35
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install tools
-        run: |
-          set -euo pipefail
-          brew install xcodegen
-
-          python3 -m venv "$RUNNER_TEMP/sora2-venv"
-          "$RUNNER_TEMP/sora2-venv/bin/python" -m pip install --upgrade pip
-          "$RUNNER_TEMP/sora2-venv/bin/python" -m pip install pillow
-
-          xcodegen --version
-          "$RUNNER_TEMP/sora2-venv/bin/python" -c "from PIL import Image; print('Pillow OK')"
-
-      - name: Create Project Sora 2
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          rm -rf ProjectSora2 ProjectSora2.xcodeproj DerivedData Payload output
-          mkdir -p ProjectSora2/Resources
-          mkdir -p ProjectSora2/Assets.xcassets/AppIcon.appiconset
-
-          cat > project.yml <<'PROJECTYML'
-          name: ProjectSora2
-
-          options:
-            deploymentTarget:
-              iOS: "16.0"
-
-          targets:
-            ProjectSora2:
-              type: application
-              platform: iOS
-
-              sources:
-                - path: ProjectSora2
-                  excludes:
-                    - Resources
-
-              resources:
-                - path: ProjectSora2/Resources
-
-              settings:
-                base:
-                  PRODUCT_BUNDLE_IDENTIFIER: com.projectsora2.nearfinal
-                  PRODUCT_NAME: "Sora 2"
-                  SWIFT_VERSION: "5.0"
-                  TARGETED_DEVICE_FAMILY: "1"
-                  INFOPLIST_FILE: ProjectSora2/Info.plist
-                  GENERATE_INFOPLIST_FILE: NO
-                  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-          PROJECTYML
-
-          cat > ProjectSora2/Info.plist <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleDevelopmentRegion</key>
-              <string>$(DEVELOPMENT_LANGUAGE)</string>
-              <key>CFBundleDisplayName</key>
-              <string>Sora 2</string>
-              <key>CFBundleExecutable</key>
-              <string>$(EXECUTABLE_NAME)</string>
-              <key>CFBundleIdentifier</key>
-              <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-              <key>CFBundleInfoDictionaryVersion</key>
-              <string>6.0</string>
-              <key>CFBundleName</key>
-              <string>$(PRODUCT_NAME)</string>
-              <key>CFBundlePackageType</key>
-              <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
-              <key>CFBundleShortVersionString</key>
-              <string>0.7</string>
-              <key>CFBundleVersion</key>
-              <string>7</string>
-
-              <key>LSRequiresIPhoneOS</key>
-              <true/>
-              <key>NSPhotoLibraryUsageDescription</key>
-              <string>Выберите фото для создания видео</string>
-              <key>UILaunchScreen</key>
-              <dict/>
-              <key>UISupportedInterfaceOrientations</key>
-              <array>
-                  <string>UIInterfaceOrientationPortrait</string>
-              </array>
-
-              <key>CFBundleIcons</key>
-              <dict>
-                  <key>CFBundlePrimaryIcon</key>
-                  <dict>
-                      <key>CFBundleIconName</key>
-                      <string>AppIcon</string>
-                  </dict>
-                  <key>CFBundleAlternateIcons</key>
-                  <dict>
-                      <key>NightIcon</key>
-                      <dict>
-                          <key>CFBundleIconFiles</key>
-                          <array>
-                              <string>NightIcon</string>
-                          </array>
-                          <key>UIPrerenderedIcon</key>
-                          <false/>
-                      </dict>
-                      <key>GoldIcon</key>
-                      <dict>
-                          <key>CFBundleIconFiles</key>
-                          <array>
-                              <string>GoldIcon</string>
-                          </array>
-                          <key>UIPrerenderedIcon</key>
-                          <false/>
-                      </dict>
-                      <key>SantaIcon</key>
-                      <dict>
-                          <key>CFBundleIconFiles</key>
-                          <array>
-                              <string>SantaIcon</string>
-                          </array>
-                          <key>UIPrerenderedIcon</key>
-                          <false/>
-                      </dict>
-                  </dict>
-              </dict>
-          </dict>
-          </plist>
-          PLIST
-
-          cat > ProjectSora2/Main.swift <<'SWIFT'
-          import SwiftUI
-          import PhotosUI
-          import UIKit
-
-          @main
-          struct ProjectSora2App: App {
-              @StateObject private var model = AppModel()
-
-              var body: some Scene {
-                  WindowGroup {
-                      RootView()
-                          .environmentObject(model)
-                          .preferredColorScheme(.dark)
-                  }
-              }
-          }
-
-          final class AppModel: ObservableObject {
-              @Published var hasProfile: Bool
-              @Published var username: String
-              @Published var videoCount: Int
-              @Published var usedPhoto: Bool
-              @Published var lastPrompt: String
-              @Published var selectedIcon: String
-
-              init() {
-                  let d = UserDefaults.standard
-                  self.hasProfile = d.bool(forKey: "hasProfile")
-                  self.username = d.string(forKey: "username") ?? ""
-                  self.videoCount = d.integer(forKey: "videoCount")
-                  self.usedPhoto = d.bool(forKey: "usedPhoto")
-                  self.lastPrompt = d.string(forKey: "lastPrompt") ?? ""
-                  self.selectedIcon = d.string(forKey: "selectedIcon") ?? "Original"
-              }
-
-              func createProfile(_ name: String) {
-                  let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                  username = clean.isEmpty ? "user_sora2" : clean
-                  hasProfile = true
-                  save()
-              }
-
-              func recordCreate(prompt: String, hasPhoto: Bool) {
-                  videoCount += 1
-                  let clean = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                  lastPrompt = clean.isEmpty ? "Новое видео Sora 2" : clean
-                  if hasPhoto { usedPhoto = true }
-                  save()
-              }
-
-              func chooseIcon(_ icon: String) {
-                  selectedIcon = icon
-                  save()
-              }
-
-              private func save() {
-                  let d = UserDefaults.standard
-                  d.set(hasProfile, forKey: "hasProfile")
-                  d.set(username, forKey: "username")
-                  d.set(videoCount, forKey: "videoCount")
-                  d.set(usedPhoto, forKey: "usedPhoto")
-                  d.set(lastPrompt, forKey: "lastPrompt")
-                  d.set(selectedIcon, forKey: "selectedIcon")
-              }
-
-              var isWinterEvent: Bool {
-                  let c = Calendar.current.dateComponents([.month, .day], from: Date())
-                  guard let m = c.month, let day = c.day else { return false }
-                  return m == 12 || (m == 1 && day <= 7)
-              }
-
-              var achievements: [Achievement] {
-                  [
-                      Achievement(
-                          id: "welcome",
-                          icon: "person.crop.circle.badge.checkmark",
-                          title: "Добро пожаловать",
-                          subtitle: "Создай локальный профиль",
-                          reward: "Базовая иконка",
-                          current: hasProfile ? 1 : 0,
-                          target: 1
-                      ),
-                      Achievement(
-                          id: "first",
-                          icon: "sparkles",
-                          title: "Первое видео",
-                          subtitle: "Создай первое задание",
-                          reward: "Ночная иконка",
-                          current: min(videoCount, 1),
-                          target: 1
-                      ),
-                      Achievement(
-                          id: "director",
-                          icon: "movieclapper.fill",
-                          title: "Режиссёр",
-                          subtitle: "Создай 10 заданий",
-                          reward: "Золотая иконка",
-                          current: min(videoCount, 10),
-                          target: 10
-                      ),
-                      Achievement(
-                          id: "photo",
-                          icon: "photo.fill",
-                          title: "Image to Video",
-                          subtitle: "Добавь фото в создание",
-                          reward: "Редкая ачивка",
-                          current: usedPhoto ? 1 : 0,
-                          target: 1
-                      ),
-                      Achievement(
-                          id: "master",
-                          icon: "trophy.fill",
-                          title: "Sora Master",
-                          subtitle: "Создай 25 заданий",
-                          reward: "Мастер-статус",
-                          current: min(videoCount, 25),
-                          target: 25
-                      ),
-                      Achievement(
-                          id: "winter",
-                          icon: "snowflake",
-                          title: "Новогоднее событие",
-                          subtitle: "Открой приложение во время зимнего события",
-                          reward: "Иконка Санты",
-                          current: isWinterEvent ? 1 : 0,
-                          target: 1
-                      )
-                  ]
-              }
-
-              var unlockedAchievementCount: Int {
-                  achievements.filter { $0.isUnlocked }.count
-              }
-          }
-
-          struct Achievement: Identifiable {
-              let id: String
-              let icon: String
-              let title: String
-              let subtitle: String
-              let reward: String
-              let current: Int
-              let target: Int
-
-              var isUnlocked: Bool { current >= target }
-              var progress: Double {
-                  target == 0 ? 1 : min(1, Double(current) / Double(target))
-              }
-          }
-
-          enum RootPhase {
-              case start
-              case account
-              case main
-          }
-
-          struct RootView: View {
-              @EnvironmentObject var model: AppModel
-              @State private var phase: RootPhase = .start
-
-              var body: some View {
-                  ZStack {
-                      switch phase {
-                      case .start:
-                          StartView {
-                              withAnimation(.easeInOut(duration: 0.25)) {
-                                  phase = model.hasProfile ? .main : .account
-                              }
-                          }
-
-                      case .account:
-                          AccountView {
-                              withAnimation(.easeInOut(duration: 0.25)) {
-                                  phase = .main
-                              }
-                          }
-
-                      case .main:
-                          MainShell()
-                      }
-                  }
-              }
-          }
-
-          // MARK: - Start
-
-          struct StartView: View {
-              let onStart: () -> Void
-
-              var body: some View {
-                  ZStack {
-                      StarBackground()
-
-                      VStack(spacing: 0) {
-                          Spacer()
-
-                          Image("AppIconPreview")
-                              .resizable()
-                              .scaledToFit()
-                              .frame(width: 158, height: 158)
-                              .clipShape(RoundedRectangle(cornerRadius: 38, style: .continuous))
-                              .shadow(color: .black.opacity(0.35), radius: 18, y: 10)
-
-                          Text("Sora 2")
-                              .font(.system(size: 48, weight: .semibold, design: .rounded))
-                              .foregroundStyle(.white)
-                              .padding(.top, 24)
-
-                          Spacer()
-
-                          Button(action: onStart) {
-                              Text("Старт")
-                                  .font(.system(size: 21, weight: .semibold))
-                                  .foregroundStyle(.black)
-                                  .frame(maxWidth: .infinity)
-                                  .frame(height: 62)
-                                  .background(.white)
-                                  .clipShape(Capsule())
-                          }
-                          .padding(.horizontal, 28)
-                          .padding(.bottom, 42)
-                      }
-                  }
-              }
-          }
-
-          // MARK: - Account
-
-          struct AccountView: View {
-              @EnvironmentObject var model: AppModel
-              @State private var nickname = ""
-              let onComplete: () -> Void
-
-              var body: some View {
-                  ZStack {
-                      StarBackground()
-
-                      VStack(spacing: 18) {
-                          Spacer()
-
-                          Image("AppIconPreview")
-                              .resizable()
-                              .scaledToFit()
-                              .frame(width: 104, height: 104)
-                              .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-
-                          Text("Создать аккаунт")
-                              .font(.system(size: 32, weight: .bold))
-                              .foregroundStyle(.white)
-
-                          Text("Профиль хранится локально на этом iPhone")
-                              .font(.system(size: 14, weight: .medium))
-                              .foregroundStyle(.white.opacity(0.56))
-
-                          TextField("Никнейм", text: $nickname)
-                              .textInputAutocapitalization(.never)
-                              .autocorrectionDisabled()
-                              .padding(.horizontal, 18)
-                              .frame(height: 58)
-                              .background(.white.opacity(0.09))
-                              .overlay {
-                                  RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                      .stroke(.white.opacity(0.14), lineWidth: 1)
-                              }
-                              .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                              .foregroundStyle(.white)
-                              .padding(.horizontal, 28)
-
-                          Button {
-                              model.createProfile(nickname)
-                              onComplete()
-                          } label: {
-                              Text("Создать аккаунт")
-                                  .font(.system(size: 18, weight: .bold))
-                                  .foregroundStyle(.black)
-                                  .frame(maxWidth: .infinity)
-                                  .frame(height: 58)
-                                  .background(.white)
-                                  .clipShape(Capsule())
-                          }
-                          .padding(.horizontal, 28)
-
-                          HStack(spacing: 8) {
-                              Image(systemName: "trophy.fill")
-                              Text("Ачивки и иконки появятся в профиле")
-                          }
-                          .font(.system(size: 13, weight: .medium))
-                          .foregroundStyle(.white.opacity(0.58))
-
-                          Spacer()
-                      }
-                  }
-              }
-          }
-
-          // MARK: - Main shell
-
-          struct MainShell: View {
-              @State private var selectedTab = 0
-              @State private var showCreate = false
-
-              var body: some View {
-                  ZStack(alignment: .bottom) {
-                      Group {
-                          switch selectedTab {
-                          case 0:
-                              HomeFeedView()
-                          case 1:
-                              ExploreView()
-                          case 3:
-                              AchievementsView()
-                          case 4:
-                              ProfileView()
-                          default:
-                              HomeFeedView()
-                          }
-                      }
-                      .padding(.bottom, 74)
-
-                      AppTabBar(selectedTab: $selectedTab) {
-                          showCreate = true
-                      }
-                  }
-                  .ignoresSafeArea(.keyboard)
-                  .sheet(isPresented: $showCreate) {
-                      CreateVideoView()
-                  }
-              }
-          }
-
-          struct AppTabBar: View {
-              @Binding var selectedTab: Int
-              let create: () -> Void
-
-              var body: some View {
-                  HStack {
-                      tab(0, "house.fill", "Главная")
-                      Spacer()
-                      tab(1, "safari.fill", "Обзор")
-                      Spacer()
-
-                      Button(action: create) {
-                          ZStack {
-                              RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                  .fill(.white)
-                                  .frame(width: 58, height: 38)
-
-                              Image(systemName: "plus")
-                                  .font(.system(size: 21, weight: .bold))
-                                  .foregroundStyle(.black)
-                          }
-                      }
-
-                      Spacer()
-                      tab(3, "trophy.fill", "Ачивки")
-                      Spacer()
-                      tab(4, "person.fill", "Профиль")
-                  }
-                  .padding(.horizontal, 17)
-                  .padding(.top, 10)
-                  .padding(.bottom, 12)
-                  .background(.black.opacity(0.96))
-              }
-
-              private func tab(_ value: Int, _ icon: String, _ title: String) -> some View {
-                  Button {
-                      selectedTab = value
-                  } label: {
-                      VStack(spacing: 4) {
-                          Image(systemName: icon)
-                              .font(.system(size: 19, weight: .semibold))
-                          Text(title)
-                              .font(.system(size: 10, weight: .medium))
-                      }
-                      .foregroundStyle(selectedTab == value ? .white : .white.opacity(0.50))
-                  }
-              }
-          }
-
-          // MARK: - Home
-
-          struct HomeFeedView: View {
-              @EnvironmentObject var model: AppModel
-
-              var body: some View {
-                  ZStack {
-                      Color.black.ignoresSafeArea()
-
-                      VStack(spacing: 0) {
-                          HStack(spacing: 22) {
-                              Text("Подписки")
-                                  .foregroundStyle(.white.opacity(0.48))
-
-                              Text("Для вас")
-                                  .fontWeight(.bold)
-                                  .foregroundStyle(.white)
-                                  .overlay(alignment: .bottom) {
-                                      Capsule()
-                                          .fill(.white)
-                                          .frame(width: 30, height: 2)
-                                          .offset(y: 9)
-                                  }
-                          }
-                          .font(.system(size: 16))
-                          .padding(.top, 12)
-
-                          Spacer(minLength: 14)
-
-                          ZStack(alignment: .bottom) {
-                              RoundedRectangle(cornerRadius: 30, style: .continuous)
-                                  .fill(
-                                      LinearGradient(
-                                          colors: [
-                                              Color(red: 0.01, green: 0.08, blue: 0.17),
-                                              Color(red: 0.00, green: 0.02, blue: 0.05)
-                                          ],
-                                          startPoint: .top,
-                                          endPoint: .bottom
-                                      )
-                                  )
-                                  .overlay {
-                                      MiniStars()
-                                          .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
-                                  }
-
-                              VStack(spacing: 14) {
-                                  Spacer()
-
-                                  Image("AppIconPreview")
-                                      .resizable()
-                                      .scaledToFit()
-                                      .frame(width: 110, height: 110)
-                                      .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
-
-                                  Text("Sora 2")
-                                      .font(.system(size: 36, weight: .semibold, design: .rounded))
-                                      .foregroundStyle(.white)
-
-                                  Text(model.videoCount == 0 ? "Создай первое видео через +" : model.lastPrompt)
-                                      .font(.system(size: 16, weight: .medium))
-                                      .foregroundStyle(.white.opacity(0.62))
-                                      .multilineTextAlignment(.center)
-                                      .padding(.horizontal, 38)
-
-                                  Spacer()
-                              }
-
-                              HStack(alignment: .bottom) {
-                                  VStack(alignment: .leading, spacing: 7) {
-                                      Text("@\(model.username.isEmpty ? "project_sora2" : model.username)")
-                                          .font(.system(size: 16, weight: .bold))
-
-                                      Text(model.videoCount == 0
-                                           ? "Твоя лента созданных видео"
-                                           : "Локальное задание #\(model.videoCount)")
-                                          .font(.system(size: 14))
-
-                                      HStack(spacing: 6) {
-                                          Image(systemName: "music.note")
-                                          Text("Project Sora 2")
-                                      }
-                                      .font(.system(size: 13, weight: .medium))
-                                  }
-                                  .foregroundStyle(.white)
-
-                                  Spacer()
-
-                                  VStack(spacing: 20) {
-                                      FeedAction(icon: "person.crop.circle.fill", text: "")
-                                      FeedAction(icon: "heart.fill", text: "0")
-                                      FeedAction(icon: "bubble.right.fill", text: "0")
-                                      FeedAction(icon: "bookmark.fill", text: "")
-                                      FeedAction(icon: "arrowshape.turn.up.right.fill", text: "")
-                                  }
-                              }
-                              .padding(18)
-                          }
-                          .padding(.horizontal, 9)
-                          .padding(.bottom, 8)
-                      }
-                  }
-              }
-          }
-
-          struct FeedAction: View {
-              let icon: String
-              let text: String
-
-              var body: some View {
-                  VStack(spacing: 4) {
-                      Image(systemName: icon)
-                          .font(.system(size: 28, weight: .semibold))
-                      if !text.isEmpty {
-                          Text(text)
-                              .font(.system(size: 12, weight: .semibold))
-                      }
-                  }
-                  .foregroundStyle(.white)
-              }
-          }
-
-          // MARK: - Explore
-
-          struct ExploreView: View {
-              @EnvironmentObject var model: AppModel
-
-              var body: some View {
-                  ZStack {
-                      LinearGradient(
-                          colors: [
-                              Color(red: 0.005, green: 0.035, blue: 0.09),
-                              .black
-                          ],
-                          startPoint: .top,
-                          endPoint: .bottom
-                      )
-                      .ignoresSafeArea()
-
-                      ScrollView(showsIndicators: false) {
-                          VStack(alignment: .leading, spacing: 20) {
-                              Text("Обзор")
-                                  .font(.system(size: 34, weight: .bold))
-                                  .foregroundStyle(.white)
-                                  .padding(.top, 20)
-
-                              if model.isWinterEvent {
-                                  EventCard(
-                                      title: "Новогоднее событие",
-                                      subtitle: "Открыта праздничная иконка 🎅",
-                                      icon: "snowflake"
-                                  )
-                              } else {
-                                  EventCard(
-                                      title: "События",
-                                      subtitle: "На праздники здесь появятся временные темы и иконки",
-                                      icon: "calendar"
-                                  )
-                              }
-
-                              Text("Стили")
-                                  .font(.system(size: 20, weight: .bold))
-                                  .foregroundStyle(.white)
-
-                              LazyVGrid(columns: [
-                                  GridItem(.flexible()),
-                                  GridItem(.flexible())
-                              ], spacing: 12) {
-                                  StyleCard(title: "Кино", icon: "film.fill")
-                                  StyleCard(title: "Реализм", icon: "camera.fill")
-                                  StyleCard(title: "Аниме", icon: "sparkles")
-                                  StyleCard(title: "VHS", icon: "video.fill")
-                                  StyleCard(title: "Хоррор", icon: "moon.stars.fill")
-                                  StyleCard(title: "Трейлер", icon: "play.rectangle.fill")
-                              }
-                          }
-                          .padding(.horizontal, 18)
-                          .padding(.bottom, 30)
-                      }
-                  }
-              }
-          }
-
-          struct EventCard: View {
-              let title: String
-              let subtitle: String
-              let icon: String
-
-              var body: some View {
-                  HStack(spacing: 14) {
-                      Image(systemName: icon)
-                          .font(.system(size: 26, weight: .bold))
-                          .foregroundStyle(.white)
-                          .frame(width: 54, height: 54)
-                          .background(.white.opacity(0.10))
-                          .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                      VStack(alignment: .leading, spacing: 4) {
-                          Text(title)
-                              .font(.system(size: 17, weight: .bold))
-                              .foregroundStyle(.white)
-                          Text(subtitle)
-                              .font(.system(size: 13))
-                              .foregroundStyle(.white.opacity(0.58))
-                      }
-
-                      Spacer()
-                  }
-                  .padding(15)
-                  .background(.white.opacity(0.07))
-                  .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-              }
-          }
-
-          struct StyleCard: View {
-              let title: String
-              let icon: String
-
-              var body: some View {
-                  VStack(alignment: .leading, spacing: 18) {
-                      Image(systemName: icon)
-                          .font(.system(size: 26, weight: .semibold))
-                          .foregroundStyle(.white)
-
-                      Text(title)
-                          .font(.system(size: 17, weight: .bold))
-                          .foregroundStyle(.white)
-                  }
-                  .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
-                  .padding(16)
-                  .background(
-                      LinearGradient(
-                          colors: [.white.opacity(0.12), .white.opacity(0.045)],
-                          startPoint: .topLeading,
-                          endPoint: .bottomTrailing
-                      )
-                  )
-                  .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-              }
-          }
-
-          // MARK: - Achievements
-
-          struct AchievementsView: View {
-              @EnvironmentObject var model: AppModel
-
-              var body: some View {
-                  ZStack {
-                      Color(red: 0.005, green: 0.025, blue: 0.06)
-                          .ignoresSafeArea()
-
-                      ScrollView(showsIndicators: false) {
-                          VStack(alignment: .leading, spacing: 14) {
-                              Text("Достижения")
-                                  .font(.system(size: 34, weight: .bold))
-                                  .foregroundStyle(.white)
-                                  .padding(.top, 20)
-
-                              Text("\(model.unlockedAchievementCount) из \(model.achievements.count) открыто")
-                                  .font(.system(size: 14, weight: .medium))
-                                  .foregroundStyle(.white.opacity(0.52))
-                                  .padding(.bottom, 4)
-
-                              ForEach(model.achievements) { achievement in
-                                  AchievementCard(achievement: achievement)
-                              }
-                          }
-                          .padding(.horizontal, 18)
-                          .padding(.bottom, 30)
-                      }
-                  }
-              }
-          }
-
-          struct AchievementCard: View {
-              let achievement: Achievement
-
-              var body: some View {
-                  HStack(spacing: 14) {
-                      ZStack {
-                          RoundedRectangle(cornerRadius: 17, style: .continuous)
-                              .fill(achievement.isUnlocked ? .white.opacity(0.16) : .white.opacity(0.06))
-                              .frame(width: 62, height: 62)
-
-                          Image(systemName: achievement.isUnlocked ? achievement.icon : "lock.fill")
-                              .font(.system(size: 25, weight: .bold))
-                              .foregroundStyle(achievement.isUnlocked ? .white : .white.opacity(0.35))
-                      }
-
-                      VStack(alignment: .leading, spacing: 5) {
-                          HStack {
-                              Text(achievement.title)
-                                  .font(.system(size: 17, weight: .bold))
-                                  .foregroundStyle(.white)
-
-                              if achievement.isUnlocked {
-                                  Image(systemName: "checkmark.seal.fill")
-                                      .foregroundStyle(.green)
-                              }
-                          }
-
-                          Text(achievement.subtitle)
-                              .font(.system(size: 13))
-                              .foregroundStyle(.white.opacity(0.55))
-
-                          ProgressView(
-                              value: Double(achievement.current),
-                              total: Double(achievement.target)
-                          )
-                          .tint(.white)
-
-                          Text("Награда: \(achievement.reward)")
-                              .font(.system(size: 12, weight: .medium))
-                              .foregroundStyle(.white.opacity(0.44))
-                      }
-
-                      Spacer()
-
-                      Text("\(achievement.current)/\(achievement.target)")
-                          .font(.system(size: 12, weight: .semibold))
-                          .foregroundStyle(.white.opacity(0.46))
-                  }
-                  .padding(14)
-                  .background(.white.opacity(0.055))
-                  .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-              }
-          }
-
-          // MARK: - Profile
-
-          struct ProfileView: View {
-              @EnvironmentObject var model: AppModel
-              @State private var showIcons = false
-
-              var body: some View {
-                  ZStack {
-                      LinearGradient(
-                          colors: [
-                              Color(red: 0.01, green: 0.06, blue: 0.14),
-                              .black
-                          ],
-                          startPoint: .top,
-                          endPoint: .bottom
-                      )
-                      .ignoresSafeArea()
-
-                      ScrollView(showsIndicators: false) {
-                          VStack(spacing: 18) {
-                              Spacer().frame(height: 22)
-
-                              ZStack {
-                                  Circle()
-                                      .fill(.white.opacity(0.11))
-                                      .frame(width: 104, height: 104)
-
-                                  Image(systemName: "person.fill")
-                                      .font(.system(size: 44, weight: .semibold))
-                                      .foregroundStyle(.white)
-                              }
-
-                              Text("@\(model.username.isEmpty ? "project_sora2" : model.username)")
-                                  .font(.system(size: 25, weight: .bold))
-                                  .foregroundStyle(.white)
-
-                              HStack(spacing: 28) {
-                                  ProfileStat(value: "\(model.videoCount)", title: "Видео")
-                                  ProfileStat(value: "\(model.unlockedAchievementCount)", title: "Ачивки")
-                                  ProfileStat(value: "∞", title: "Кредиты")
-                              }
-                              .padding(.vertical, 6)
-
-                              Text("Кредитов в Project Sora 2 нет")
-                                  .font(.system(size: 12, weight: .medium))
-                                  .foregroundStyle(.white.opacity(0.42))
-
-                              Button {
-                                  showIcons = true
-                              } label: {
-                                  HStack {
-                                      Image(systemName: "app.fill")
-                                      Text("Иконки приложения")
-                                      Spacer()
-                                      Text(model.selectedIcon)
-                                          .foregroundStyle(.white.opacity(0.46))
-                                      Image(systemName: "chevron.right")
-                                          .foregroundStyle(.white.opacity(0.42))
-                                  }
-                                  .font(.system(size: 16, weight: .semibold))
-                                  .foregroundStyle(.white)
-                                  .padding(16)
-                                  .background(.white.opacity(0.07))
-                                  .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                              }
-
-                              VStack(alignment: .leading, spacing: 12) {
-                                  Text("Последние достижения")
-                                      .font(.system(size: 19, weight: .bold))
-                                      .foregroundStyle(.white)
-
-                                  ForEach(model.achievements.filter { $0.isUnlocked }.prefix(3)) { achievement in
-                                      HStack {
-                                          Image(systemName: achievement.icon)
-                                              .foregroundStyle(.white)
-                                              .frame(width: 30)
-
-                                          VStack(alignment: .leading, spacing: 2) {
-                                              Text(achievement.title)
-                                                  .font(.system(size: 15, weight: .bold))
-                                                  .foregroundStyle(.white)
-                                              Text(achievement.reward)
-                                                  .font(.system(size: 12))
-                                                  .foregroundStyle(.white.opacity(0.46))
-                                          }
-
-                                          Spacer()
-                                      }
-                                      .padding(12)
-                                      .background(.white.opacity(0.05))
-                                      .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                  }
-                              }
-                              .frame(maxWidth: .infinity, alignment: .leading)
-                          }
-                          .padding(.horizontal, 18)
-                          .padding(.bottom, 30)
-                      }
-                  }
-                  .sheet(isPresented: $showIcons) {
-                      IconPickerView()
-                  }
-              }
-          }
-
-          struct ProfileStat: View {
-              let value: String
-              let title: String
-
-              var body: some View {
-                  VStack(spacing: 4) {
-                      Text(value)
-                          .font(.system(size: 21, weight: .bold))
-                          .foregroundStyle(.white)
-                      Text(title)
-                          .font(.system(size: 12))
-                          .foregroundStyle(.white.opacity(0.48))
-                  }
-              }
-          }
-
-          // MARK: - App Icons
-
-          struct IconChoice: Identifiable {
-              let id: String
-              let title: String
-              let image: String
-              let alternateName: String?
-              let unlocked: Bool
-              let requirement: String
-          }
-
-          struct IconPickerView: View {
-              @Environment(\.dismiss) private var dismiss
-              @EnvironmentObject var model: AppModel
-              @State private var errorText = ""
-
-              var choices: [IconChoice] {
-                  [
-                      IconChoice(
-                          id: "Original",
-                          title: "Оригинальная",
-                          image: "AppIconPreview",
-                          alternateName: nil,
-                          unlocked: true,
-                          requirement: "Доступна сразу"
-                      ),
-                      IconChoice(
-                          id: "Night",
-                          title: "Ночная",
-                          image: "NightIconPreview",
-                          alternateName: "NightIcon",
-                          unlocked: model.videoCount >= 1,
-                          requirement: "Создай 1 видео"
-                      ),
-                      IconChoice(
-                          id: "Gold",
-                          title: "Золотая",
-                          image: "GoldIconPreview",
-                          alternateName: "GoldIcon",
-                          unlocked: model.videoCount >= 10,
-                          requirement: "Создай 10 видео"
-                      ),
-                      IconChoice(
-                          id: "Santa",
-                          title: "Новогодняя",
-                          image: "SantaIconPreview",
-                          alternateName: "SantaIcon",
-                          unlocked: model.isWinterEvent,
-                          requirement: "Зимнее событие"
-                      )
-                  ]
-              }
-
-              var body: some View {
-                  NavigationStack {
-                      ScrollView {
-                          VStack(spacing: 13) {
-                              ForEach(choices) { choice in
-                                  Button {
-                                      guard choice.unlocked else { return }
-                                      apply(choice)
-                                  } label: {
-                                      HStack(spacing: 14) {
-                                          Image(choice.image)
-                                              .resizable()
-                                              .scaledToFit()
-                                              .frame(width: 66, height: 66)
-                                              .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-                                          VStack(alignment: .leading, spacing: 5) {
-                                              Text(choice.title)
-                                                  .font(.system(size: 17, weight: .bold))
-                                                  .foregroundStyle(.white)
-
-                                              Text(choice.unlocked ? choice.requirement : "🔒 \(choice.requirement)")
-                                                  .font(.system(size: 13))
-                                                  .foregroundStyle(.white.opacity(0.48))
-                                          }
-
-                                          Spacer()
-
-                                          if model.selectedIcon == choice.id {
-                                              Image(systemName: "checkmark.circle.fill")
-                                                  .font(.system(size: 22))
-                                                  .foregroundStyle(.green)
-                                          }
-                                      }
-                                      .padding(13)
-                                      .background(.white.opacity(choice.unlocked ? 0.07 : 0.035))
-                                      .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                                  }
-                                  .disabled(!choice.unlocked)
-                              }
-
-                              if !errorText.isEmpty {
-                                  Text(errorText)
-                                      .font(.system(size: 12))
-                                      .foregroundStyle(.red.opacity(0.85))
-                                      .padding(.top, 6)
-                              }
-                          }
-                          .padding(16)
-                      }
-                      .background(Color.black.ignoresSafeArea())
-                      .navigationTitle("Иконки")
-                      .navigationBarTitleDisplayMode(.inline)
-                      .toolbar {
-                          ToolbarItem(placement: .topBarTrailing) {
-                              Button("Готово") { dismiss() }
-                          }
-                      }
-                  }
-              }
-
-              private func apply(_ choice: IconChoice) {
-                  guard UIApplication.shared.supportsAlternateIcons else {
-                      errorText = "На этом устройстве смена иконки недоступна."
-                      return
-                  }
-
-                  UIApplication.shared.setAlternateIconName(choice.alternateName) { error in
-                      DispatchQueue.main.async {
-                          if let error {
-                              errorText = error.localizedDescription
-                          } else {
-                              errorText = ""
-                              model.chooseIcon(choice.id)
-                          }
-                      }
-                  }
-              }
-          }
-
-          // MARK: - Create video
-
-          struct CreateVideoView: View {
-              @Environment(\.dismiss) private var dismiss
-              @EnvironmentObject var model: AppModel
-
-              @State private var prompt = ""
-              @State private var photoItem: PhotosPickerItem?
-              @State private var hasPhoto = false
-              @State private var duration = "10 сек"
-              @State private var ratio = "9:16"
-              @State private var quality = "1080p"
-              @State private var cameo = false
-              @State private var showCreated = false
-
-              var body: some View {
-                  NavigationStack {
-                      ZStack {
-                          Color.black.ignoresSafeArea()
-
-                          VStack(spacing: 0) {
-                              HStack {
-                                  Button {
-                                      dismiss()
-                                  } label: {
-                                      Image(systemName: "xmark")
-                                          .font(.system(size: 18, weight: .bold))
-                                          .foregroundStyle(.white)
-                                          .frame(width: 40, height: 40)
-                                          .background(.white.opacity(0.08))
-                                          .clipShape(Circle())
-                                  }
-
-                                  Spacer()
-
-                                  VStack(spacing: 1) {
-                                      Text("Создать видео")
-                                          .font(.system(size: 18, weight: .bold))
-                                      Text("Sora 2")
-                                          .font(.system(size: 12, weight: .medium))
-                                          .foregroundStyle(.white.opacity(0.46))
-                                  }
-                                  .foregroundStyle(.white)
-
-                                  Spacer()
-
-                                  Color.clear.frame(width: 40, height: 40)
-                              }
-                              .padding(.horizontal, 16)
-                              .padding(.top, 8)
-
-                              Spacer()
-
-                              VStack(spacing: 13) {
-                                  ZStack(alignment: .topLeading) {
-                                      RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                          .fill(.white.opacity(0.05))
-                                          .overlay {
-                                              RoundedRectangle(cornerRadius: 26, style: .continuous)
-                                                  .stroke(.white.opacity(0.18), lineWidth: 1.2)
-                                          }
-
-                                      if prompt.isEmpty {
-                                          Text("Описание нового видео…")
-                                              .font(.system(size: 17))
-                                              .foregroundStyle(.white.opacity(0.36))
-                                              .padding(.top, 18)
-                                              .padding(.leading, 18)
-                                      }
-
-                                      TextEditor(text: $prompt)
-                                          .scrollContentBackground(.hidden)
-                                          .background(.clear)
-                                          .font(.system(size: 17))
-                                          .foregroundStyle(.white)
-                                          .padding(.horizontal, 12)
-                                          .padding(.top, 9)
-                                          .padding(.bottom, 64)
-
-                                      HStack(spacing: 9) {
-                                          PhotosPicker(selection: $photoItem, matching: .images) {
-                                              HStack(spacing: 6) {
-                                                  Image(systemName: "photo")
-                                                  Text(hasPhoto ? "Фото ✓" : "Фото")
-                                              }
-                                              .font(.system(size: 14, weight: .semibold))
-                                              .foregroundStyle(.white)
-                                              .padding(.horizontal, 12)
-                                              .frame(height: 38)
-                                              .background(.white.opacity(0.09))
-                                              .clipShape(Capsule())
-                                          }
-
-                                          Button {
-                                              cameo.toggle()
-                                          } label: {
-                                              HStack(spacing: 6) {
-                                                  Image(systemName: "person.2.fill")
-                                                  Text("Камео")
-                                              }
-                                              .font(.system(size: 14, weight: .semibold))
-                                              .foregroundStyle(.white)
-                                              .padding(.horizontal, 12)
-                                              .frame(height: 38)
-                                              .background(cameo ? .white.opacity(0.20) : .white.opacity(0.09))
-                                              .clipShape(Capsule())
-                                          }
-
-                                          Spacer()
-
-                                          Image(systemName: "waveform")
-                                              .foregroundStyle(.white.opacity(0.70))
-                                              .frame(width: 38, height: 38)
-                                              .background(.white.opacity(0.09))
-                                              .clipShape(Circle())
-                                      }
-                                      .padding(.horizontal, 13)
-                                      .padding(.bottom, 11)
-                                      .frame(maxHeight: .infinity, alignment: .bottom)
-                                  }
-                                  .frame(height: 220)
-
-                                  HStack(spacing: 8) {
-                                      SelectorChip(title: duration) {
-                                          duration = duration == "10 сек" ? "5 сек" : "10 сек"
-                                      }
-
-                                      SelectorChip(title: ratio) {
-                                          ratio = ratio == "9:16" ? "16:9" : (ratio == "16:9" ? "1:1" : "9:16")
-                                      }
-
-                                      SelectorChip(title: quality) {
-                                          quality = quality == "1080p" ? "720p" : "1080p"
-                                      }
-
-                                      Spacer()
-                                  }
-
-                                  Text("Пока это локальная версия: кнопка создаёт задание и ачивки. Реальный генератор подключим к backend/API.")
-                                      .font(.system(size: 11))
-                                      .foregroundStyle(.white.opacity(0.34))
-                                      .multilineTextAlignment(.center)
-                                      .padding(.horizontal, 14)
-
-                                  Button {
-                                      model.recordCreate(prompt: prompt, hasPhoto: hasPhoto)
-                                      showCreated = true
-                                  } label: {
-                                      HStack(spacing: 8) {
-                                          Image(systemName: "sparkles")
-                                          Text("Создать")
-                                      }
-                                      .font(.system(size: 18, weight: .bold))
-                                      .foregroundStyle(.black)
-                                      .frame(maxWidth: .infinity)
-                                      .frame(height: 58)
-                                      .background(.white)
-                                      .clipShape(Capsule())
-                                  }
-                              }
-                              .padding(.horizontal, 16)
-                              .padding(.bottom, 20)
-                          }
-                      }
-                      .task(id: photoItem) {
-                          if let photoItem {
-                              let data = try? await photoItem.loadTransferable(type: Data.self)
-                              hasPhoto = data != nil
-                          }
-                      }
-                      .alert("Задание создано", isPresented: $showCreated) {
-                          Button("Готово") { dismiss() }
-                      } message: {
-                          Text("Оно появилось в ленте и прогресс ачивок обновлён.")
-                      }
-                  }
-              }
-          }
-
-          struct SelectorChip: View {
-              let title: String
-              let action: () -> Void
-
-              var body: some View {
-                  Button(action: action) {
-                      HStack(spacing: 5) {
-                          Text(title)
-                          Image(systemName: "chevron.down")
-                              .font(.system(size: 9, weight: .bold))
-                      }
-                      .font(.system(size: 13, weight: .semibold))
-                      .foregroundStyle(.white)
-                      .padding(.horizontal, 11)
-                      .frame(height: 35)
-                      .background(.white.opacity(0.08))
-                      .clipShape(Capsule())
-                  }
-              }
-          }
-
-          // MARK: - Backgrounds
-
-          struct StarBackground: View {
-              private let stars: [(CGFloat, CGFloat, CGFloat, Double)] = [
-                  (0.05,0.07,1.6,0.70),(0.17,0.16,1.0,0.62),(0.29,0.09,1.7,0.75),
-                  (0.44,0.19,1.1,0.60),(0.62,0.08,1.3,0.68),(0.84,0.16,1.7,0.76),
-                  (0.11,0.34,1.1,0.64),(0.27,0.29,1.4,0.71),(0.48,0.38,1.0,0.55),
-                  (0.70,0.31,1.6,0.73),(0.92,0.39,1.1,0.61),(0.07,0.55,1.5,0.70),
-                  (0.23,0.63,1.0,0.57),(0.42,0.54,1.6,0.74),(0.65,0.62,1.2,0.65),
-                  (0.88,0.57,1.0,0.56),(0.15,0.79,1.6,0.73),(0.34,0.84,1.0,0.58),
-                  (0.59,0.76,1.4,0.69),(0.81,0.87,1.2,0.64),(0.95,0.74,1.0,0.57)
-              ]
-
-              var body: some View {
-                  GeometryReader { geo in
-                      ZStack {
-                          LinearGradient(
-                              colors: [
-                                  Color(red: 0.003, green: 0.025, blue: 0.07),
-                                  Color(red: 0.005, green: 0.075, blue: 0.17),
-                                  Color(red: 0.002, green: 0.02, blue: 0.055)
-                              ],
-                              startPoint: .top,
-                              endPoint: .bottom
-                          )
-
-                          ForEach(Array(stars.enumerated()), id: \.offset) { _, star in
-                              Circle()
-                                  .fill(.white.opacity(star.3))
-                                  .frame(width: star.2, height: star.2)
-                                  .position(
-                                      x: geo.size.width * star.0,
-                                      y: geo.size.height * star.1
-                                  )
-                          }
-                      }
-                      .ignoresSafeArea()
-                  }
-              }
-          }
-
-          struct MiniStars: View {
-              var body: some View {
-                  GeometryReader { geo in
-                      ZStack {
-                          ForEach(0..<22, id: \.self) { i in
-                              let x = CGFloat((i * 37 + 11) % 97) / 97.0
-                              let y = CGFloat((i * 61 + 19) % 101) / 101.0
-
-                              Circle()
-                                  .fill(.white.opacity(i % 3 == 0 ? 0.72 : 0.48))
-                                  .frame(width: i % 4 == 0 ? 2 : 1, height: i % 4 == 0 ? 2 : 1)
-                                  .position(x: geo.size.width * x, y: geo.size.height * y)
-                          }
-                      }
-                  }
-              }
-          }
-          SWIFT
-
-          cat > /tmp/sora_icon.b64 <<'ICON'
-          /9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAQDAwMDAgQDAwMEBAQFBgoGBgUFBgwICQcKDgwPDg4MDQ0PERYTDxAVEQ0NExoTFRcYGRkZDxIbHRsYHRYYGRj/2wBDAQQEBAYFBgsGBgsYEA0QGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBgYGBj/wAARCAIAAgADASIAAhEBAxEB/8QAHQAAAgICAwEAAAAAAAAAAAAAAQIAAwQIBQYHCf/EAEEQAAEDAwMDAgUDAgQDBQkAAAEAAhEDBCEFEjEGQVEHYQgTInGBFCMyFZFCUmKhMzSxJFNyksEWGCU1c4KD0fH/xAAaAQEBAQEBAQEAAAAAAAAAAAAAAQIDBAUG/8QAKxEBAAICAgIABwACAgMBAAAAAAERAgMEEiExBRMiMkFRYRQjFTNCcYE0/9oADAMBAAIRAxEAPwDUk8IDlFD8L93L86KCI9lEAhFCM5RAPCqWHdTvwigSsqnHKkwlJ8pHPUmViDkhLuCqNT3VTqp4blc5zpqMWQanukNQQqQKjuxCYUHHJKz2mfULUQb5oA5SfOk+UwtwOcqxtNgP8U65T7PDH+Y+eCpuqH+IKy4b2CYBoOFY1zP5LhhhtXwUIqA8FZpKDY3ieFfl/wBLYZ+aeQUAKgHBXIVS0uG0QlICfLOzBHzIOCjFQCYKzIHlBPlf07MMGp/lIRmp4Ky8qKfLj9lsT9zwVP3D2Ky8qK/Lj9nZifue6BNWeCswgwony4/Z2Yn7kcFT9zwVlqd0+VH7OzEioOxTNbWcYDST2CypKam806oeORwnyv6nZiVKN1SgVKb2zxI5S/u+CuUur2rdlvzTO0QFQyHPgmPdPlR+17MB3zJ/iUR80ZgrPqtayptBB91Wp8r+nZi/uE8FD9wcystGRHCfK/qdmETU8FQfM8FZikSr8r+r2YhdU4gqfucwVl8KFPlf07MUip7ofucZWXnyhnyp8r+lsaKkd0P3B2KywY7qSVflx+zsxf3J4Kh+Y3MFZYnygT5U+X/S2IKjt2WlN850xBWRDSOEC1sZCdJ/ZcKRWhMKuU/yqf8AlSOtz2MKdc4PBxU907X+6xjRe3/FKXe8HIKd5j2dWaHJp7SsRtX3yrRUC3GcSzOK8FScqsOnumBC3EsmCmfKgKOFQAMSpyj2QxCtAqIxhDsqykEKEKIwSgChwocJCcqTKxCEwEpfASOqAKh1QnAyVyyzp0jFY6qqt73mGiVYy3ccvwshjWMGAFiMcsl8Qxm2z3ZcYVwpMYOJKtByicldI1xDPYhAiAoMIzmAjE8rQTOUFaxwaHN2gz5SwSSqFgqQQnx5Uge6BMzwoQZTwOymJwUFeUYKZ3uhJCAQpBT4POEIEKBTKkJseVBHlAm0k4RghZNCv8guPy2vnz2VTvrqOfET2QVZhT7hWEIQPKoWMKQieIRhAsFCI5TgKFAp7IZ7J4yptMoFg9wgeU4bn2UgIEA8orJdZXTLZtw+nFJ38SscAeUCqZCbaUdphAiMYRP2Uj7oFhTlOB5UgIFhCPKfCkAohMwonIkYQLe6ilUTbUdiBO6MolqgbKoAyoWtPIBTbIUgd1JixQ+i107cFUmnUZkSVmkAFSGrGWuPw1GTCbUI5wVe2omfQa8QBCxnU6lJ3chY+rEqJZgdhEGSsRlX6onKyGvyt45xLM4reynI4SyPKYcLrDJiFIwijGFWQ44QkI9khIAypM0sQDiqKlSO6j6kAwqWsdWd3hcMsrmodIhAHVT9KyKVEU8nJVzKYYwABHaQtY668yk5foDEIA+yaPZSPZdWbLMoQU8eyO3ICFqxymaC5wA5KZ9PbiZQEteCORwoto9pYYcMpZTuc57tzuUu3yEotPpU+lTaptwlFpIQnGEdqm2EospEjKMAIwe6harSApwjtKm3ypS2GCpgI7fChalFgDlHHlXULOrcNe6lEMyZVRaQSO4QsDkITHZNB4U2+ytFhIQx5R2obfZSixx5UxCm32Rj2Si4KpjyjtUDRiUWwWXZ2dO6pVHvdtLBIyqaracj5cpBuB+kkfZKS2bX1W4rafTsXU2CnTwHDlcfOITwht+6UWXPlT8ptpU2lKLPbmkLia8hnsmuTRNyTbk/LjujTs6tWgarCNoVHJlKWxaxzsNBKEQSCMq+3uHW5cWgGeZVbzuqueeSiWXEKR4QOFOyLaKynS+YHGYgeVWiDiJKgBGOUMlNtwoGlWkssFQyE0YU2oWGI5QwU23Cm1KLAqfhHaVC3CUWXsoQCM5TRlDalFsd9AHI5VYL2OhyzNqgawiHCZXLLXXmGoyv2pa/6laCqKtF1B8jLCmp1JUwzvwZYsuPKmUUhOcr0OQEx3VFR8J6jgAViOJe8NGVx2Zfp0xgWtdVqeyzqbGtZAAVTGbAAFcCrrwrzPsyyMEJypJKi6sBmclSFbbupNuWuqt3MnIQrOpuruNNsNnAUFcH2R5cop3lVBKUjuicoe3KigOUc9kYUSAM+VM+UVFUDPlTKKiAZUg+yKiKGfKMHyoogGfKmfKKiCylcVaDXNpkAP5STOSMoKT2QRCD5RJUQkM+VM+UVEQM+VM+VOBlNtJExhFiC5CelSfWqfLYJd7IQno1alCr8yi6HeUCVKZo1DTeCD7odk9Z769X5lUy7ykiRyoSGVM+U20IQFUoM+VDPlNHuhAKLELGVqtOkWMcA0qkNCs7IR7IFhSAQmj2U/CWUrIMoQeytICXhPala0l0K19I0jDlWCQ+Ryi+o+o6ajpKlAoZ8qAqSO6rKZUCKLSGuDj2UUIIwQQhlXXFdlZwLGbQBCqQkMqTKKGZ9lSBgIYnhWUiwGajZCudbfsmsHCPCisXEcKQi4QZQOOEBbtd+2/LSsSvQdbPxlh4WUmf+7bljskcLhswqe0N45X4kSq3kJ3HCx6joByu+U1DnEKaz+QCrLejDd55VNNnza2ey5FgAbEcLlqx7T2l0ymopXtPMqAweVbASlgK9FOdh9kJPhPthSPZZoJ+FO/CaD4U2oAplNEKQEQknwp+E5ahtSgsnwpPsnj2U2otkz4Uk+E+1DvwiFk+FJPhNyeEY9kpbJPsijHsjtRCqI7SoWoFn2UkeU+3CAZ3RYCTKGZ4WRRtq1zUFO3pPe7iAF2bS/TbrPVy0WekPeHd+Fmc4j2tOpQfCi9z0P4XOvdWpNqVrKrSB8Fd0s/g41qpTH6mvXY7wuWXJ1Y+8ljCZ9NWYQ7rbT/3NL8D/na/9lh3Xwd6sxhFG6rvd4Wf8vVPqWp1ZfpqsROIT7jt29l71rHwo9dafRfWt7WtVA4BK841X0r630ZzheaO9ob35XTHfhl6lmcZh0vshMK+5tbmyqmndUH03AxlpVGDkLqlCeEI91FJVoRThRRAZwm+W7Z8yPpSI73bNk4UDOa5jZcIBSiUS9zwA4qZGEAmOym5HPgIwDlKCk+yBGE5AUjCsQWrhSFZGVIyqWTx/urrf5Ic75oHsk/CEY4WUhHAGo6DicJc8QnHHCkJRKuCoAfKeMZRAgQFaQkHypB8pvwpnwopYVk1Nsb/AKfCE+QpICBSJPKkGUc+Ec+ECgIiW5lQ8qHCFFecLCrOPA5KyqpMLDa01K+OxXDbP4bwhmWlLbT3EZKvIMqUxDAPCJ5Xowx6xTGU3IKKKKoEe6kIqIBCkIqJQEKQEVEoCFIRUSgIUhFRBFP8Q+6B5VhpvYA54x2ShmXLrR9kxtIfuTlU0GUSXfNJGMKnlDuoC9oDzH8UA2UYU7IF25ULVZTpvq1Aymxz3HAa0SV7R6V/D51D11d07q8oGjZTJ3AtK557MdcXlK44zlNQ8j0jQdV1u7bbadaVKr3GAdphbA+n3wq67rlOld66x9Cm6DDSttvTv0S6Z6NsKdG3smVKjQJdVaCV6rbaZb24AZTa0Ds0QF8bkfFq8a3v18KZjy8P6I+HHpHpukwutm3NUDPzWAr1ew6K0SxaBQ0u2ZHG1gC7O1jW4ACIBXyNnL2Zzcy9mHGwxhgU9Mo0htpsDB4aIV7bVgHJWSApAXCc5l1jDGPwoNBir/S0yeFlwhCnaWusMJ1jTeIeNw8FcXfdI6NfsLbjTbd8/wCZgK7D2QORK1jsyj1LM68Z/Dw/rT4fejuo6Dw+yp27yMGkwBa1de/CNqmnU6t307vrAZDXlfQJzGu/kJWNXsqNdha5s+xX0NPxLbrry8uzi4z5h8d9e6T13pu9fbapY1KbmmJDTC4WAV9YOtfSXpvqqwq0b2wpBzgQHMYJWlfq58NGrdJuq6lolI1bSSdv8nQvt8b4hht8T4l8/bpywlrk7EKR3V1e2rW9d1GvSfSe0wWvEFVxGCvfduRQiBCIblOG4SUtXGU0GZTFvshGVYhEUUwolCKKd1bbikXn5sx7IKTzCKB/kSOJwipEAf3RUUVoRRo3HCn2UBI4ShODCineVEEUlRRBMbhPCtqtpNDflkkxlVKJQEYRUUUoDwpGUVO6sQMOu6AVLNkkuIyq65JdA5WZbNLaIkQV5o85uvrFd9kp5TwYQIXqciqKEIgYylAKJtuVI9lAqibblQtQKgDlZFOgKlIu3hsdlUWqhVEYUhKAURhSEAVr7irUYGPIgKuFAMoGkqTlZjqlq/T2sbSiqDl3lYcFYEPKutrW4vbpttaUnVarjAawSUKFtXubhtC3pmpVeYa1vJW5Hw7egFOjSo9SdQ2u6q6KlJjhBAXLdvx1Y9smscZymoYXoV8NjLunQ6g6loAjDm0zg/2W5Og9O2Wk2TLe2oMp02CAGgBZ2m6ZSsrRlKmwNa0AADsFyQGIC/K8rmZbsv4+tx+NGEXPsrWNbgAJuUYKgxheJ7B4UQJzhSSgPZRLPuhKBiQphLKgKAqEzwohOUAPKiJEqQraUXaDyFxer6Pb39o+lWpMqMcIcHCVywUP3VxymJuGZxiYqWmnrr8NtrqVtX1/pqg2lcNl72dz9gtL77QdZsNWq6fX025Nam7aQGHlfY68sqdzTc0tEHkFedXvo70lea07Uq2lMdXc7c53uvt8X4n1xrN8/bxZv6XzDsujupr0j5Gj3me/yiuwW/o915dUw+lptwAfNIr6d2Hp7oFlTAoWFNn4C5yjoltb0gynSpgD/SF0y+Lx+IYjhZPlo30M9QXtn9BWH/4ise49E+v7du46dXMeKRX1Zbp1ID/h0/8AyhLU0uhUEOp0yP8AwhSPjE/pf8SXyNvfT3q6wBNfSLsx4pFcJcaXqlr/AMxptzTju5hC+u990bo17TIr2dN0/wCkLp+t+inRur0Cy40hjg4dl3w+L4T7hzy4uUenyt4MOwfBUAJC3j6y+EjSLp762jNp2pMw05WvHXHoF1d0k59Slb1LuiO9Ni92rl69vqXny1zj7eRxCm0RKybm0ubOqaV3QfReOzgqF6fTBVE0eykeyoWCp904EqbUCKeyfaIkIR7KhdqicBTaoEQ2mYAlPtgyraD2UbptR7dzR2VFBae4I9lIV9zWZWuBUYwtbHCWm1r6oaSAD3WZ8CqFI8rIuaLaNYtY4OHkKnkQkSOMcHOrjbzK5RgPyxIyuNpBzroFvnK5aF59PuZdM58UUjCEeyeMqdl6XMkKR7JlAQRICAfhH8I/hTvKgX8KfhMpyFQuYgIZTgZU/CgSPZSPZPPspz2VoJHspHsnhSY7KBIUj2TnlCFQowm/3QHK7t6XdG3HWnXdpp7KbnUW1B8wgThZyrGLkq/D2L4bfRip1Dq1LqPVqJNtScH02vGHBb86TpdCwsadGlTDWMENaOwXX/T/AKOs+l+mbbT7am1raTA0wIld0gDA4X5Pn8qdudR6fW4vH6R2kwyMIgJfspOF857jShJ8pZQ3K0lm90CSlme6m7CUljKG4pSfCWTK1SWs3YlHdIVcnyoJ7JRazcpKq3EIyTlKLPuyiSq5wpKUWs3FQ8quc8ohwASktZCmFXvQlKLWoEpJSkx3Sk7LJCEhIXBKXZSmZlYThJvMwlkpCcrUQzZn06Tx9bMritS0Ky1K2dRr0mvY4ZaQuTlAOhbxyyx8wxlEZe2vHqP8OHTvUdpVq2NpStrkyQ8NzK019QvRzqToW+qCraVa1sDirGF9UHBjm/UAV1fqro7SuotPqW97aU67XAj6hML6nG+I54zWfmHl2ceK+l8kCQHFp5CkTwtmvWr4cbvR6tfW+naDn0RLnU2NgNC1qrUX27/kVmFlVuHNPZfe1bcdsXjLxTFeFKaDKGRlQldaYtIhSMyj3UGUWEUiQojPulKG1Ag+E0lTKgQhQNEpw0kwBkovpvpu2vEFKCQJ5UjPCMIgpQ4+xdNV2AuQnK42xY75pdGFyZGFy0x4bz9h3UPCgCkwcrswttqrKNy2pUALR2Ku1S6oXV4KlsxrWBoEAQsQlCMcIIDhCUwCET2SktJHlRSM8I7SVUtOThDKO1ym0qUAojtQhWIB+xRnCWIUhKBlTAKHCndZaM1he8U2zucYC3n+Fb05pab04zXru2HzrhoguatQ/Tjp5/UnqBZWYYXNZVa5wjtK+pPQ2g0NH6btrOlTDG02CAB7L5vxPkfL19Y/L1cXX2yt2m3p/Kotb3Vswp7pe6/K/wBfY9CSgSYQJygTiFaSU3ISJ5SmECYVpDglCfdLOFO0q0CSEJygSEoOUoPKkpNwiFN0K0lnnypOOUu5AuylFn3BTd4Kr3eFNxSktZKm4KvdhKSUpLXEhDd7quT3SkmVaLWGohvKrLvKBdCvVm1hcPKm7CpJygHEFXqlri5IXKsuyhvhWMUtYXFTdHdU78qF6vVJW75QLzwqt3spuyrTEyxNV0y31KxfQrUm1GuEFrhytMfX30FNI1+oNBt4Il9SmwQAt2w5cXrOk22pWb6dam17XCC0iZXr4vInTk8+7XGUXD5EV6NW3uH0KzC17DDgcZSCIWyPxEejlTQtSq9QaRQP6dxL6oA4la3OBBg4PcL9Nr2xsx7Q8CSplSPaFIWqaGShlTIUnPCpYgpoPdJPdXmgW2/zS4EeEQtN/wAusKkAx2Ksvbt17c/NdTazAEBUTCnKFlyipEocIWosc0BwsyMLj9OdNMrPGQuWmPohc/aQgWmU4H1ZVlZrAG7DJhdaZUbUwAU78IxhEsICmPCMBSAgEA+EYHkKQFICFpA8qR7qQFICFpHuhAlGAhxlBICBUJg5XYem+itc6ruRR0u0qvkxua2VJmlh13HcrMtNK1K9IFpY1qpPG1srZ/07+FC+vatO76ie00sE03CCtmOlfQ/pLp+iwUNNYHN7kSvBu+Iatfi7d8OPnnFw1l+F/wBNNUodVP1rV7OpSpln0Co2DK3vsmbLZoAjELAsNBs7FoFGixgH+UQuXa0AQF8DncqORlcPo8bTOuPIjjKVxCY8KtxXhh6rQmAllBAlaiAT7pUC5CT5VQyiXHdAlCzO4SyYQJPlD2VhLFGcJC4Jd0LUQza2UCY7IThTslFpKKEqSFKSxHuogXYQJViEmTSkJQLgEC5WIZnJD90FOVMwtJZSUpKJMBISrEJMoXQkL0DmUhWohLPuULik3QhuW6LPMoz7quUQfJU6szJ93upu/skLghKvVLdY616XtOounbmwuabXMqtMyF85PUjoOv0b11cWtemW0Kj3PYe0Svp9XHzKJYe61x+Ij0+o670lX1GlQm6pcOAzC+n8P3dcusvFuwqbaL1nMdV+gYGFUQjVpupXNSi/+THFv9lPZfccZJHhDHdOBBQ2qIQDMp/yUdscKQgEYU4VzrZwtfn7hE8KmMZSAQjtlABNyUlLcZp38T9lyDeFgacPpK5AcLnq+yG8/ZghgIhTuujKcqdkEZwrSTCSilmUZCUUkqE+FAcoE5SihnygSFDlSFKBBRYx9SoGU2lzjw0d09raV7y8p2ttTL6tRwa1o7lbY+hfw6Oquo651NRndDm0KjZC5bt2OnHtk1hhOU1Dzv0o+HzWusbijfapTqW1mSDD24cFu50L6R9PdIabSp6fZUmVWgTUA5K7lonTljpNjTt7WgyjSaIDGjAXOABoAavzPK+I57ZrH0+pp40Yx9UKKFpTo0wIBj2WQAAYCBKG6F82ZmXqiK8HUmAkLxGEN+EpTkykJQLkpMlaiCwnJCBnsVCMpZytQRKHJUPhTgIZlCxnCBMKIOKqWm5AuylmOUD5laiGQccoSECUsrUJa8HCkqtpTF0qUkyJKG4eUjjCqdVABlKZnJeXjlK6qG8mPuuGvtYoWlN1SpUa1rRJJK8k6w+IHpLpyu6h/UaVSq3BbK9Ovi55+ocMuRjD291ZnO9A16Yz8xaf6r8XFrTqkWNpTqtB5Dlh2vxc76obX06mxvnevV/xuxxnlR+m5jaoJwZCffjla7dMfEt0vqtSnSurqlQe73Xsmj9U6fq1s2taV2VKbhIcCuGziZ4e4ax5ETLsbnYSgpGuDmbm5CnuuFO0ZWLuUhOUSUhK1C2BKUmFHHOFW5xW4gmVm7CO8Kjd7qByvVmZX7wpuVIcI5RDhwlMyscSQuG1zTrfUdLrW9wwOY9hEH7Lli7Cx643UyCt4XEuGzzD5o+sfSQ6S9R7i3pM20ahNTA7krz/AN1tl8VnR5q2o6goMwC1hgLU4DH2X6PTl2wiXlCJUhPtIEkYQXQQDCB4RQREJrGnB/4aXJCd1Umh8sjE8pCCUVAm+yAwIUAxKtDj9O/iVyIGJWBpowVnwuemPohrP2k+yHdNAQhdaYsFEYRgIWVRHZ9fPKZ7A0wqpFEdqMKBSrKNN9a4ZRptLnvIaAPKTbPC2B+Hb0iq9VdQUtZ1Kgf0jDLZHJBWNuyNePaViLmne/h59CC51LqXXbeS4AspvEgELc7TdMo2Vu1jKbWACA0cBU6NpFtpdjTo0aTWNa0ANAhcrIX5Dl8rLfl/H1dGmMIsf8WVCcpSQlLl46emZOSkLkpf2lLMrUQhpQLkpieVJWqWzbpRlJOFMqFmmQlPKJKUnMqxDNmlCUu4JPmDdyrSdlhKUuwlL5Uk8qxCdgmUCYKhOUCfK0lkeUo5yVHlCVotZPZEHyqwcJS4hIhiZM944ldX6p6ksdB0mre3ldtOmwEyfsuV1G8bbWz3udAAJytG/iL9WLjWNYqdP6ZcObRb/MtMZC93D4s7cv48m/bX0w4/1c9f9V1/UK2naDVNK3Bg1KZgleD3F1dX1c1ru4fXeeS8yqy5x5yTyVyOhaNea9rVLTbJu6rUcGgfdfpNeGOuKh4rcbsaOGgKBrf8oXbesfT7XujK7aeqWzmtcYBAkLqmYVjKJ8wiym99NwdReaZHdq9D6F9YOpej9TpOddVLi2BALajpAC86aI5UMK5YxMVI+kXpj6taV1rpVKrQuG/NgBzOO2V6zTe2rSD2GQV8rOh+tdT6L6io31lXcKe4BzCcROV9CPS31Bt+r+nLe+pVWkuADmyvhc7h9Pqx9PRq2zE1L0hzlWXSrKjf8Q4KpJyvnQ9cSDj2VTnRhO7hVHldIgmUBlQEpAYU3e63TFrJxwiCqd6bdhKLWF2FW84Km6UjnJEMZPJvXLRxqfpncsLd22Xf2C+eBY6nXqsI4qOH+6+nnXdsLvpC9oloP7Tj/svmnrtv+l6muqERD3H/AHX2eHMzjTyT4mYYT6pdTDC0CO6rEyiTlRe2mUQKKESlAdlEYRjGFVsqikI7fdFtx+mzkLkVgaYMFchCxpj6Ia2e0jCikp6TWurta/DTyurmrx2yiBjKy9RoW9C4Y22cC0tkwe6w1LBOEDPdSSjkoAjhSVMxxyYRYdi6I6WvOrur7bS7Rm6XAkx2lfTT0x6JtelekbWyo0mtIYC4gd4Wtnwr+moo2o6ju6QNXfDZHYrc62pihatbxhfnfi/JuemL3cTVf1SdxAwl3IOfKTcviRD6CwuSkpC5IXrUYlrCcoKvchuK1Ra1EDCq3SmDvpVpOx+Alc8AKp9QyqKldrBLnQkY2xOcMh1QAZKpqXDWNkuC6j1X1xo/Temvur+8pUgM7XOgla19b/FbRtq1S10OlVJ4D2mQvdo4Ozb6h5tnJjHxDbl2p27TDqoH3KT+pWxOKrT9ivnbqHxHdeV3mpTv3MYTgbVjW3xG9e0awLtQc4DnC9n/ABWVOE8rL8Q+kNO7p1DAKyBUkYIWkXRvxX1WVWUNco16nYu4C2N6K9WNB6toB9leUmu/7svkrzbfh+eHlvVyL+56gHScoErGt7qnXYHMcJ8K6SvFMVL0xlYkyUMSpIlCQkQtjgBVvcA2VHOCorP/AGyVuIZyyeZesPVQ6c6CvL0v2vAgZXzl1e/qanrdze1XFzqlQuz91t38Vmtup6D/AE9riA9kwtOAPpBX6Pg4dddvmZ5XlIAL2j4cdAGqeoxuHsDhS2vErxulSfWqtpUmF73GA0crcT4YugL/AEqk3Vb+i5jq7YDXNghduTs6a5lMIvKIeweo3p1YdZdN1aN5at3lhFNwbwVoP170Fq/RvUVazqWdV9DcQxzWkiF9U69tS/QsoPA4jK6H1P6Z6N1I0jUbWnVb2gZXxuF8Q6XGXp6N3HmMrxfLoNc0xUY5n/iUMdjK3u6h+Gro27Y8ULRtKoeCXLVn1b9OrT0+10WlteUKwc3dtpmYX2NXIx2enmmJj2827L2z4ffUG46c6tZple4It6pDGgnEkrxTEBZWnXNSy1i1uqTi11OoHSF2zxjLGYlH1l0i7bqGlNcxwd9MyES0teQV5j6H9UO1noWxq1Km+o5sOK9Qu/prEjgr8vs1/L2Tg92GfbC1LznCrJ8qOcqicrcQTIk4SF2UCUsrcQlm3YUDjEFLIiFJzlWi1kpXGEN090rjhIhiZcTroFTR7xpyPkO/6L5q9c0xT9Qr1oGNx/6r6V6yR/Srv/6Dv+i+a/Xpn1FvY/zH/qV9ThR7eafvl1s8owoeVJwvo0iQgY4RB9kWtDnwSpQVRWOZtMAgpeECwUWiXAFXMLS0tJj3VboDiAUscbpuAVyPYLj9MH0mVyAGFjT9kN7PaTnhQKQocLqwhARwl5VrSwUs8qTASAO6g5UEQjCUAYXLdNaTV1vqm102iwuNRwwB7ri9oXtHw2dPN1f1Mt7qpTDm0nkLGzLphOSxFzTen0s6ap6D0ZY27WAftNLsd4XfajvqicLG02g2205lNogAABWOdmV+J25/M2TlL7WvHphEISlJQJzykc6DypEN2JKrLlC7KRxW4gs+4hQOJCQFSYEBWmZlbuUL4Cr3FK56RixMo6oBJJgBebep3qFpvRPTta9uq7PmNaSynMFy7fruqUdN0ytd1nhtOm2XHwvnZ65+ol51h1xXtKdy42ds9zAAcEL6PC4vzMrn08O/O/Dh/UD1Q17rnWqzri7qCz3ENpk9uy6MIacSqm4gdl2nofpp3VXVdLSmkgP5K/RRWuP48sy626XNgmQkIg4C9c9UfRrVOhnMubem+vaOA+sDAXk8A91qM4zi8S1YE4dwuc6c6q1npXUmXmkXb6UGSB3XD7QpAHdJxiYqVtvP6Meutp1TaUtP1CqKN6Ib9bsu91sfZ3DLq1bUaQZH918mNF1i90DWaOo2FV1OoxwMtK+gXof6n2/WPTFAGqP1DAGObOTA5Xxefw6+vF11bZxmpe0GQUu4p3/VTD28eQscP918mHtsznZWPXdFBytccLHrn/s7l0xhjKfDTH4rqrzq9sw8GmtZabHVXspMEucQAPdbP/Fbav8A1tvcQdoprWGhWdQr06zRlhDgv0vF864fOn22b9EvQz9U2jr+v24czljHjv2K3I6csNN0yzYGBg2iA0dloR0p8R+uaDZ0bCvauqUGQMuXs3TnxO6FfGnSvhTt3OgEkrwczjbtt/p01Z/LntMNorm5dVeXNOFiVdQq0aRl+FwXS/VOna/pbLuzuG1aVQSCFR1pqTdN6Vu70OgU2Eyvl46Ky6TDrO6/MS8u9YvWmx6U02rQtKza16QYDDkLSHqXqXUuqNaqajqVd1R7iY3dgs3rTXLnWOsdQrXFR1UfNdsJ7BdbA7wv0nH0Y6sXmmZnzKAKGdpjlH7oSu1Dbv4WurBUsDpL3fVQaO/uttqwNS1pVRwRK+dvw+63/TOvxR37RVc1seV9C9Prm60YO/ytXwviOvrnGT06J8TClx7KsnKLzBOVUT7rzxDVo4pZKBclLluISzblNyr3e6hcFaSZWbkNxVcqbilMzLh+prkWug3lV3/cuH+y+c3WVAVeo7nUhWDt9RzdvjK359Tr8WPQ13Vnljh/svnZqFzUudSrvdVJaajsflfT4mMxFuE+5lhn7IfhMeOUF9CBO6OJQ7yjCAoESplQz2KlCQhEFTPdRC2Dpo+lyzw0wMrB0wYd9lyA4XPTH0Q1n7LtMI7cJh4RjK62ySMoFqtjCG1IlLIAmGQYRgBKlraEw0uPZbb/AAjdOFpr6m9pj5gIJWo7/qpELfz4XNObb9AbgBL9pn8Lx8/Prol01RecNkHQyg1o8LHL1ZcyGMA8LGcSvx+Efl9jKTFxSlyrJKWV2jFmJOXIblWShJPC3RMrZhSVVuhTclJa7dAVVV8NJCm7Cpqv/bcrGPlzyl4t8QPVH9E9OLxjKu2pWpGBK+e1eq64ual08y6odxK2p+LXWX/NsLGnUO07g5srVVo+kBfpuFr664fNzyuSNB+y2F+F/pt1/wBaDVH091NoLZ914bpGjX2t6nTsNPouqVXmMAwt8vh99MLjpDQKX6tkV6h+YfynN2xr1zcmGPaYh6V1N0ZadQdNvtL6i2o17C0bhMYWj/qb6E6/0/1FXraLavr2hdg+F9G7j5TKIpuiFwt5o+m3zT82kx477mgr4fD5+WrxPp6dnH83D5Q6hpOp6bVNO9tKjHDn6SsEGexH3EL6X9S+n/SF3RqG8sLVjAPqf8tshaUetendJaZ1ILXpupu2kioABAP4X3dHLjb+HjnxNPKCccL0v0U64uukOvaDBUItqh2kTiSV5plXW1d9te0LimSHMqNMj2K9UxGUTEj6xdN6izU9FpPDt25gdP3CyHDbULV5J6DdXU9a6EtXmpuq4YcyvYLphbUkcFflN2v5e2Ye3Vl2w8/hSSIVFX6mEJyY+6rccpjCZS1v+J7QX3nRtS8pM3Gm0CVpSWFv09xgr6U+p+jM1noG9sywOc4SMey+cmr2jrHXby1eI21XD/dfoODleFPHPiWAQOCixrQZaNp8+EOykr3D2r0Y9Xb3pLWKenalcOdZvIa0uM7QvfPWLrq1f6RVrmxumvbdUpbBWjrCQ4EEgjgjsuWuuoNWu9MZp9e6qvoMG0Nc8kQvLlxscs4yZlx9GnW1HUSyi0vq1nSAF6tpnw89Yalow1Bts9oc3cBPIhdS9MK2n2nqRY1NSANAHO4SF9DdKu9Pd01Qdb1aIYaYIgiIhTlb51V1L8vmv1F09qHTOrv03UqLqdVvYriAvdficvNIueuNmn/L+aGt3FkLws4XbXM5YxkseYc70bqj9I62sLtjiAKoLivpT6day3VelrWqHAiqwGV8uqdT5VdlUYLTK3/+HjXBqHRFkwvk06YByvD8R1dtdtY5VlD2G7aKdw4DysUnKzNRBbWDjwcrBJlfJ1+cXomakpKQmEXFVuK7xDNm35R3KoFTdjKtFrd04RnsqgTyjuylMTLzL1l0vVdV6Er0NMY59QSSB4haD31lcWGoVbW7pmnVDiSD919RbihSubRzHNDpGQVqt68+kgrfM1/SKAbU5e1ogQF9Di7f/GXGZqWrW2MpYMZVzqb2VCyoCHAwQUkd177WycFFzHs/kIlE8zCse41GgEcIWpGVAMpw2Ewb3QtXnhCFbEFSAhbjdMBIP2XIgYWBpf8AF32XJf4crlpn6Ia2ey7VA3KPuCoBJXWmEgqZRhDulARIQhMQp+FAhb7YX0R+G6kGen9qGjljZXzxJ+mV9DfhsuGP6At/LWNC+f8AE/8Apl348/XD3W8fBa32WE50rIviA8H2WE53hfmNWPh9XKfJi6EheeZS7spXOXoiGbPvCXeqnOQ3YWqSZXbpwjuVG/siHp1Z7Li7Cx67voT7scKit9VMhXGPLnlPhpB8VBLuqLQE/wCJy19tbd1xd07YEAvMSeFsv8V2lPpajYXgaYJcSVrMxxBDgSDyF+n43nXD5s+JbteiXpX0/wBP6Hb6tc1bevd1Wh4+oOiVsXp93aWdENogcdl80tB9U+r9ApNpWl+flN4acr0fp/4mtfs7mlT1Evq05AdDV4OTwc9s3MumvbOE+G9tWu6v9QOFx99di1tH1XvhrRJMrpvp56j6V1hotO6tarS5wyychWepmqt0/oLUa7H7ZoOgz7L52PHmM+kw3lsuGv3rf65VaD6/T2h1jvMsqOH/AOwtWLu5uLy5dcXFVz6jzJLjKytZunX2v3V095dvdMkyuPJH+YL9Fr0xrxiIcKKBCnE/ZMAgBldCJbUfCprrv/lj6k7ZdBPuty67t9lTevnH6CdRnQPUdlNz4bVAYPyV9EdKrfq9FYNwJ2yvg/E9dZxm9GnP/wASbsFVOcg4lri0pCcLzRDcywdVtxc2NSmcgsI/2Xzr9XdEq6N6mXFJzIbULnj+6+jdcbqLhOYWnXxO9PihqrdTYyMAEr6fByqaefZ4lrgWwgBlWESBCER2X07YsB7ptyEeUeQtUgtqPp1BUpuLXDIIXebD1g6z07R/6bQuwacQC4kmF0ThSApOMT7GRqOo3mq37ry+quqVXckmVi7TCICJmFaFTxFJw8hbc/Cvq73afWs3P/jAC1KIBYVsp8LDnf1S5EGNwXDkReEwW3R1ITa0T32riS7C5e//AOSo/wDhXCVDBX5/R9r07PYOdnlIXpXO7JC5eqMXOz70Q7Cp3ISZW4xLX7kQ5UghTdlScWZlcHQuN1jTaOp2FShWYHNqNLSCFmyjuBbBTGKm4c8mifrX6fu6V6nqXtrRP6as6BAwF5QYlb9+q3Sdv1J0fc03UQ6rTYSzHdaH6rp9XStar2FZha6m4iCvq6cu2KYyxIREoEYTDhdGkyhhQZR2jyrAHaUQpA9lNqtDjtLGHfZckuO0v/F9lyI+y5aY+mG9n3BA8ojnAUj2Uyu1MJ3SzBTSfCkTyoFlSUdqkSeFKCPMUXeVvZ8LGqMr9EupF31MIbC0XDZBBC2a+FHqCpb6pW0+o8kOqYBXk52HbTLpqy65RLd6+MtYfIXHucs6s4VbNtQeFx5OIX5fVHin1csvNgXFKXIEnuUhIXoiHOcjOd7pdyWZSk4WqSz7ioHFIXQoHYyrRMrdxjlI930FAOQJBSIc5l4P8R+g09T6Cq3Qpy+hTJB8LRrbs+g8twV9KfUbRhrHQeo2rWbnPpkAL5za7ZO0/qa+s3gg06pbC+3wMrwp4c4qWCMBQEDJEhT/AAqcjhfQpl3f039RNT6K6ko1Les4WrnBr2T27r3/ANV/VzRtZ9KqdLT7lhr3DHMcxrpIwtSA2Cri95phrnEtHAXLLRjllGf5LZfT2kV9e12202kTvrP2yto9I+GLTrjpum+5ewV3MkuI4K119PtXt9C6+sL+5gUmVAXE8Bb36V6kdKV+nWXI1Wi0FkkTwvPzM9mNdEvy0V9RehrnobqZ1hWO6m4ktdEYXT4zhewev3V2m9T9XsGm1W1adNpaXtPuvH+AIXbX2nGJyIcr0zeHTuq7K5Doiq3P5X0p9NNVGpdJ29x8wO3MAXzDY406rKgOWmQt7fhv6kOo9BWls9+6o2ZXk+I6u+q29eVZPcLkRWcsVzll6gNrt/lYG6V8jX5iHpnwjjIheH/EF0zU1roOrWosmowzgdgvbS7K4fqHTqWp6JXtaoBDmEAHzC9eieuUS4bPMPma9hp1X0zy1xBSHK7h6kdMXHTHW1xbVKRZTc4uBjyV1CQvuR5i4crLJ8KfhMAgVaUJlT8o7RCkCFKEwhPsmDR3Uq7QYYZQI8xScVtj8LWjObYXF5EF0ELVKhRdcXNO3aJdUMALfr4fOmqmmdI2LnsLTUYNwIXk5mcYa5mUnzMYvZdSdssqIdzsXCPM5WfrNfdcCmP8OFxZdhfH4+P0W9G2fqK4wkJRc6VU4r1xDlZtym5VbpQLluktbu90d6p3KT7p1S1wcZTT7rHD8pg5ScWZkLuk2tQLXAEEQVpb6/dKf0vqv+o0aO1ld5JIC3UcdzIXjvrn03R1joivcbQalBhIML0aMqmmLqbaVeChMdlY9hpVHUnctMFKRPZe2IdQaiOFBhFaoCMKxlB76TqgktaJKTvwrG1KjaZYHQ08hKHFaXkFcltWBpIwSuThY0fZDWyfqJGVNsp4ChXRiyQPKkBGPZGD4C1SWWEICYhGD4SlsnGV6d6HdRM0H1LtBWfspvcZkrzSCsqwualjqdG7pktcxwyFjPDvjOJE0+rGiXjL/QqdRrpD2hwKFQbCQV5z6NdVUta6LtHiqHFjGsOe8L0m8EHcO6/I7Nc6ts4vo4Z98bYr3Qqi5FxJCrK6xBZi7CUuSOJSk4WogtZv7KB8lUypuha6pbI3DyoSqg5HdhSmZlRe0xWoOplsgiCF8+/W7Qm6P6lXD2NgV6rnEQvoU4/SStRfig6cdTv7fVadMxtJcQF9DgZVnTzbfdtZ4gpgMI7fpB9kQCvsOJYBCE9k20lHaVqICZBkYWazVtVp0Pk09Rrtp8bQ7CxA0yjBlSYCP3VHF73FzjySo0bHgkYTwVI9lAbh7KjpY0AR2W1HwsXsUnUN3DePytVC36Stm/hZp1P19R3bb/6rhyo/1SNwtRH/AGKm491xEkjlc1qWNMpfZcFOOV+d48Xi9Wc+TFyV4FSmWkpCUWleinOZeF+uXpuOptEqXtpRH6qn9RLRkgLTS6tq1ld1La4YWVWEgtK+nlxZUb22dTqAGRBHla0+svoibypV1jRKAFYS5zGiAvpcXkx9mTjMdWrTKjBRLS0T5VcLKvtOvdMu3W17QdTqNMGQYWMAvf8A0CFIHCJ3HgKZjhKWwgAwgQJym7e67R0f0TqvVmr0be2t3/JLhucRGFJ8eZSZr2530g6JuOpusKNw6iTQoPDiSMEL6EdL6bS0bpxu1oaGs+lefelXpla9NaRQpNotBYBveRkr0fVLym2mLWgfpbhfB5+/52fysHTVFf7J/wDji7mua105891QXIHlVucAt441FMzlYufHKqc+Ur3CVWXLrEMnLkNyqL0C9bjEXboU3e6o3lHeVeqWvBhHcPKpDpRkqUWt3YC671jp41DpG9oRMsIXOzlY92wVaBpHhwytYxUsZS+eOv2ps+qr+3cI21SAuMgTyu9+rGnCw9RroNbAfVcV0giSvp4x4bifCsBSAn2qQZ4SlLEBEccJoUgqSMDRx9LvsuRiVx2jzsIHELlIMLGiPohrZ9xFITBsuATFsOgrrTnav8KQFZtCm0K0KyJCkYTkIQEosmZRAnlGPCgnuitg/hv66fputjQrqvtpvduG4rdmhXZfaa17SCYlfLPR9SuNJ1ijf2ryx7HAyPErfn0f6/odR9KW9Q1muqgBjmzlfF+J8W/9uLtp3dPEvSHSCQq3HCybhgP7rP4nwsV2AvmYTb09iPOFUTjlM45VZOF1iEtN0YRmOVXPlTcFqi1wdhMHZ5VG/wB0fmDslM2uLpwvJvW/QBrHp3exT31Gt+lep7wT4WBq1nRv9OqUKzd1NzSCF01ZdMolz2eYfNGvRNG7q0XNILHFuVUAvSPVzo+p011nWfToubQrOL5jC862r7+E9ouHmssKJ4Q2rdBYQhOW5U24SgkKQeyYAqD+SlLauJbHlbc/DDpNSjpFO7cwgVMTC1V0qxqahrVta02lxfUAIjyV9BvRfplmh9JW1uae0sbuK8XxDOMNUrj9WUQ9G1d7WWVOnORyuA3jhZusVvmXzgDgFcaSvjcbCsIds8rk5dlMHABUbvdAPzyvR1ZZLaha6Qrq1C3v7fY9rSfB4WCanuoKrgQQ6FjLXfpiXnfXnovpHUlB9SpbBtQyQaQjK1y6n+H/AF/Tbh79OYHUgcBxyt3qGpFgDamQr3UdIvRuq0xu91218vZqisotnr+pfOOr6ZdWUqpYbQ4/0lZen+k/Vt/cCmLYNn/MCF9DP/Z7Qqh3GnR/ICZmg6FQcHFlI/aF1n4nH4hr5eUtQ+lPhtuq9WnU1hrp5hhWynRPpjpvT9hTpU7djKbP8RA3LubrzS7KlFvS+oLjLrW7isC1p2tXl2cjdv8AERUL8vHH7ptyt7f0bO0/S20QBErgHVd7i4nKx3VXPy50pd8LWrjxhBlsnJa5+VS56Dqirc9d8cWLBz8pC5K5yQnPK7Riln3IEpC+Ak3FWIS1u5EFVBw/KMz3VotaHFNuKp3FMHFSYS1wcJQqFsSVWJPdSpOyAs15YmWnHrrbCl12Kgj6iSvLSAV6369Z6ypfcryUL6WuPphvCfBCMcKf3VgEhTaVqYaVxhTan2wpCzRbjNH/AIu+y5XsuM0YfQ77Lldp2qceP9cNbJ+oowZCJBJymARXanMkGUOysj2UIwlCsAwpEKxSJTqtq4lTarI9lIjsrRauIXovpN6hXXRvU9Nr6jjaPIaWzgSeV58oBBnuMhZzwjOOso+mHS/U9lr2iUq1vVa+m5sggzlcpVY5h8jytKvRL1N1HSdZpaFcF9ag4hrZOASVu1p5N3oQrP52zK/L8vR/j5/yXs059/plhPKqJUe76iEhckQ3aEpS5K50qsuHddIhJlbvRDpWPuEptytMzK+UcObtPCxw8pg+MqTizLzr1X9PLfq3pqs1lJv6gCWujwtJNa0W+0LV6tjfUX03McQNwiQvpOxrLimabjkryD1U9ILLqe2qXNCk2ldASHhuSvZxOVGH0ZPPnFT4aT7fKEeF2TqPozXOm7+pQvLKqGNOKhGCuux7r7GNTFwllQiU8IHCtFl2hDb48wraLH16gp0W73nhoC9X9NfR/VOpdTpXWpW76NsCDDm4OVjKYwi5LpyvoT6c19V1ynrN/QLaI/gHDuCt3LK2ZpOhtOA5zYhcH0X0fY6BpNNvyG0aVNuG+4Wfq+ofqKuynhg4C/NcrfPJ2dcfUO+GPWO8+2DVqmpULj3VDneEC/EEql7srvhjXhiz7/KVz8KouzyhuXXqWt3lQPKp3ZR3J1SZX78Ih5AwYWPv90C9OrLJ+a8nDih8x8ZcVjb47qfMHlOha8unkqsv7Kpz5PKVz/dajAtaXe6UvVJeEpeI5W+qWtL55KQv7KsvlKXrcYlrC4pC4pHPhIXLXVmzl6XdKQkKA+61EJa0FNOVVuRBSYS1ocnnKoBTh0d1miZXA9kajvplVB2eVjalci302rXJjY2VIxuWbahetd38/r0sn+LiF5qeV2j1B1H+p9e3lUGdtUrrJHC+ljFRTpj6IMJlNqIAVmFsACTAULS0/UIVjDtqB0TBTXFT5zgdu1Tr5LcLoo+l0+Fy4XFaKJa77Ll4WePH+uGtv3SCBGJTEDyoBjK7UxZR9lDwmhSMpRZEQCiR5RIVossGUYjlRHupRYAZUhMIJTECDCvVLejeiOltv/UVrns3Bm1w/uvoLZtZQ6caAIlq0p+G6xFfqmrWLZhn/qt0romloNIDwvzXxfztxxevi/nJwlV31kqs1BCUuJGVU50LGOK9jOefKTd5SFyXcV0iEtaHKB2FVuU3YWqLXB0o7lSHKb5UnFm2SyoWukLNpXVGo3bXaD7lcUH+6YOE8rnlqtLY3UPQujdQ2rzVtKVYkcuHC8Q6j+HOzurh9WzeaMnDWNwvfqd5VpGGvx4XJW2rUtu2rSYfwpjt3aft8s9MZ/jTW6+HHWGViKNSq5vmFmaf8Nt++o39TXqt9oW439R04j6qbR+FBq2mNM/Lafwus/Et9fafLj9vC+jfh+03SqjKta2bcv5l7eF7dpPTumaFZtaWMpho/gBhC46ipj6bam0e4ELiLi/r3DiX1D/defKeRv8AvmobiMMPMeZcjqWrvqONKkYYOwXEF5OSVUXmcpXPHlejXpjCKhnLOcvZy9VudKQvyq3Oyu0YsWYuyhvVZchuXSILW7pU3e6q3IF3urGKWu3+6U1Mqku90u73TqWvL/yl344VW8IF3urGLMytL8QEhefKr3FKT7rUYpa3cgX5wq9yUujurGKWu3JS7KqL/dLv91qMUtaXDwlJVe73QLvdWiz7lA5VzKgJmFaS1wciHKoHKYHKUlrQ73R3KqSoCQFmmbXBy631zfiy6LvapdBFMrsAOOV4r669Smz0cabRfDqoLXLevG8libmmt2pVvn65d3BM73kyseJCgB5dyU7Gg1Bu4Xup2ssBEDKtqMAqfTwhtyiWTahtzlW7RCBHhKHD6J/B32XLNBJXGaGJY77Llw3Cxxo/1w3tn6pDaJQLfCdDuu1OdlDcZU2phz2Td1aLVxIU2mOE8BDKUWTaUdvlNmEewVqi1YajEsKeO6GCCUoiWxnwvMadRqyBOxbb6qS3SaIC1J+GCoxmpVATEs/9VtrrBH9KpL8v8T//AE4vVoy+jJ157gFSXSg96rLitRikSJclLkpcqy/stxC2s3qb8KneUN5WuqWyA/CnzAsfeRygah8q9GWT8we6O4LFFQphUxynQZG8cqfM91jl/dKXynRJleahOJSbswqS5Dcr0plcCE3zAAsfcOUC/wAJGJa8v8KsvHdUufjlIXrcYpa0vSl3uqi8Ib4K1GKWsLsob8KouQLlqMU7Ld4hLuk91XOOVC6FqkmT7ku6eUhclLspSWtmAlLsJNxKkpEJZ9yG8qsnCQuWqLW7kC5UyjPurSWYuypuSTnlCcqxCWs3ISlnCmFaTsaUzSqphMSe6dUtYCjuCrDlA6Sp1LWgzhNjuq2p5gcrMpam9uW2dlUuKhhrBuK1D9UOoTrvV9ZrHk0qbztXuXq11ozR9AfY0n/u1gWGOy1cqvfWrurVDLnGSvXx8PzLWEebY4H1Jw3KLWjcngL0zDrZQECPdMcJeHcLPUTaFIJ4UiSnAwkQW4bQR9DvsuZjC4nQBLHfZcztxMrnxY/1Q1un65VoESFbtBU2r0U52qDfKMGQByrdolSNrw6ODKtFlfTqsaDUploPEqvKz7y9N6xrCzbtWLsUotXtk5ULVaGwENqFqoKkYKsLZCgYqr2v4dr0UOqH0d0Hbx+VuXqDjU0KgTytDvRu+/Q+oLQXQHbR/ut7KTxddPNJ5DZX5r4tr67scnXVPuHAPdyqXOhGqdryFSXKYw3EiXYSElQlVly7RBYl2UpcUpcAlc8dlaS1m4oFxVe73S7pPKtJa0OymDsKjd7qbvdXqkyv3+6BcqS5Df7q9WZyXFym72VO9TenVOy0uSF2eUm5Au91qISxLiQlkyUC7GUhd4ViEs+9AvJVW5TetdUtZJ8oFyTegT7oln3IFyTclLlaLWbkpcklDd2Si1odhAuwq5A7oblYxZs+7EEoE4STlCfda6pZ5R3AKvd7qbsK9UPyZQ7pZRnKtAzhQGDhKorQacoyklREtYDhQHKAE91YG4WZlJkzfdcV1Frtromj1bqvUDYaYz3WXf31DT7GpcXDwxrQTJWsvqX17V17U32VnVP6Zp7HCa8O+SxFus9ZdR3HUnUFa5qPJpz9IPZdbLU8QECvoxjTrHgoCMIhGJPKtLasjKEFWlCMKUWQNKPBTQpCUW4fQAdrvsuZAXEdP/8ADd9lzcLnxP8Aqhvd90lhTam7ogL0U5Wrj3UhW7AhtgKFqwMqEZVkKEK0WTb3Q2qzEKKUWrhQtVmIwpA7q0tuQ6fv6ml9TWd2x0RVbP8Adb9dA65T1zpOlUBH1sXz2GHB45aZC2t9BOr6VfQ6Vg6r+5SH1BfJ+LaJ2arj3DWGVS9bv6ZpXj2eCsMnK5nVaYqAXLOH5XDOXzNGXbGHaVbjlVuKZyqe5emIYtC5KXBKSgStUWM+EJ90pKUuAK1SWslSfdV7ku5WmZlaXBLvMqslDcrSWtLyhvMqrflHcnUtYXd5S70hd2SbirEJa0vQLvCrlSVaS0kyjIKXd5Q3LVFnmECfKUuEJHPJSmbOXIFyr3YQLoVotYXIbswFXvUDleqTKyfdAlJuS7lYhLOXElSfKSUZEK0WbcAjPsq5R3K0h92OEQTCVMChYzhHKEJoWUsInCYA/hENnIVjA3uQPcrMyWVrY5wsLVdXtdMtHVrmqGNA5K4vqfrPSem7Vz7iu01AMN5Wu3WnqBqHUd+5tKo6lb8Qx2Ct69c5yRFuX9Q/Uq51iu+x0+qW0AYLmnleWuy8uPJOVc7Ik8nkqsiMr6GGEYxUOkRRSEu0qxSJC1TVqw0pg08pohRSiyxlDarO8qR3SiyRhTb7J4ypAVLcN082WOnwub2gLiOn2gUTPhcziVw4n/XDe6frku1SD4TSJ4Uz2XqpyssHuptTwSpBAUoskIQVZBQzMK0WSFE5wpCUWQhCFZ91PwlKQBd49L+o36B1fTa55FOs4NOV0qFbb132t3TuaWH0zIWM8O2MxKW+g+lXlPVdCa5rpBb9K4+uxzKpZHC8r9H/AFGGqWVOyuqgFWkAI4lewX9MVWC4pwQRJX5ecJ07Zwn8u8ZdocS85VLuFa/2VL5AXqxZtWcFLMIlL910SwkyhJlA4KEq0liSlmUJ5SzKtJZ8od8pTKkxyrSWJxwhKBKG5ajFLEnylLlCUjjiUos8oyqS6OEDUI4VpFyhVG8lTerQtLgAq3PHCQuJSkwrGKTJt0qbkii1EJZ8qSllAlWksyk4SSpITqWecISEu7soSrRZx7Jp4SDlMEpLODlO0ZSAK1vKxIsZT3CeyLjSps3OqNaPcrG1O/Zp+kVbhxja0la29R+qGuX9/VoW9XZRBICYa52el/8ATYDVerdH0i3dUuLlmBMNIK8m6q9ZalVj7bSYg43HleR3mp319U3XFw90/wCorF7+69WHGiPa9f2zdS1e/wBWrmreV3uJ7F0hceRCdKRhd4wpqPBJPCHdPnwp+FqmlcKQrAJ7FCMqpaxlpVqW7qrANreVTGFkMr1adJ1JpG13KpjKzjE/kssEcIwUwHsjC1RauCiAnjKkAqUW65odZ3z3UswF2KMwun2wuW3TTbTun6oXb6Laht2Gp/PvK8nAzvHr+nfkY1NmAlGMpgMpoXup5rJCkQE+1EDCUWTaFNqcjKitFk2hTb4TxhRKLJtU2p4MzCMFSi1e32UiCMKyCpAKUW5TpvXbnp/XKV9bvIDXS4Dutv8AoLrOz6i0GmTUBJaN4nutLNq7Z0N1rd9Lasx29xtiZc1eHmcON2Nx7hYymJ8Nyb20DP3KWWnwuNfPdY/SPVdlr+ksq06rXgjIB4K5G9obHl9MS0r4uEzjl0y9w6XflgOMKsuTuGFWRleqGLCZSlyJB7JD7rcQWm5SZQ7oEicLVIPJQJkoEyocKxAhS7kCUCqlmJnulJwpCU8qxCWB4Sok4lLJKvUtJgqT3QJygcrXVLQmUCVCRCTdBViENKBKUuCBcrQfchulJPdSfZWks+5NPuqpRlKIk/KIKQFMOUos7eVYFW3mVYIhZlDhXUxLgqR2V4LadFz3ECASuWcrDoXqzrTdM6WdRbUAe4xAPlayklz3OPJJK9E9VddfqvUz7ZtTdSZ2nErz3avocfV1xaxCM5UhNCkey9MYtWCBCYIqUWrAzwjtCsDcKQp4LV7fZTarduEAEotUWo7VYRCWDKUWXaptVkFQtwpRavahBVkdkNplWi3U9Or/ACdU2xyYXbjJyulbxQ1FjyJBK7nQd82g2oOCvF8Pn7sZejkR6k7Qm2jwpCZfQp5bJAQVkBLhWiyDjKkJts8KBqUWWMwVIATwpt9kosolT8Jw1Tb5SiyfhRNEFGEpSJds8q3b7IQEot2vorrnUOldSZD3Pt5yycLZvpbrbTepLBjqVZheRlk8LTiB4XLaL1DqOg3Ta1lXe0A/xBgLx8nh47fMey6boVKTCJZmViOYJyvL+jvV2zv6NO21R7adXj7r1G2vrS8oCpSqNc1w5BXyc9eWqayhq4lS4Z5VTuFmVKU/U3IWK+m4dlrHKJRSojtM8KEQuqTIIE4RIMoGOAraWBOEJRIMIQVYJkEORKcjyEhKsIU8JZ5RdKrytxCWMxKQuyiSkJC1SWUuQLkDxKVKLHMqSoJUwqlpPujOUqPCUWMojlKOU2EoswVgVbQrApJZm+FY0dkjYWRSplx9ljKSxptzJXTvUfqhmidPvp0KoFdwwAey7Tq+pWuj6XUu7ioGsYJytZ+r+objqTXKlZrposJAE4hNOv5mVz6ah1i5r1bq7fXquLnOJMlU7VaRkyEsL68emrVxlGPZWbcIBuULJtCgb4TwiB3UmCyZCkEhOBCG3wpRZYKm1PtMKbcK0WSFITBqkJRZYKkFPGEIUossYUhPECEI7J1LdGvWlr2v8GV2zR6nz9MpuPhddv6ctOFyPTF0Sx1B5GBAC+Txp6bq/b27vq127DtyptTxlQwvs08FkjKG0qyEICil24UhWKfhBXtAUAkJyoBhAsYRhHkwE7qWyJIM+ES1JCG3hW7fCm1WlV7fKhbhWFqgaiWpDc5R2q3ahEKFlZuY4OY4tI7hdo0Pr7XNEcxrKxq029nmV1iMqELOWEZRUwNgdA9Y9PurdrL87KkZgLvemdVaTqjA6hcM/wDuK1EGOCR9lk22o3tm4Ot7moI/1FePPg4T9rUZTDcgVrWpxVZ+Cg5lInDx+CtXdN691m2EVq8gcZK5Sl6ta5QdBc0j7LzzwtkT4lOzYzZTnuj8ul7rwNnrbqjWbS1v/kUd62ao4EBrf/Ip/ibVv+PezTo/5gFU+rb0suq0wPuFrvdereu3AIpuYPwuCvOuOoLyQ64AB8EhbjhZz7lOzaq3qW90Poe132Mqm6oGlU9lrx0V6i3+j6i2le1S+i4ye62A0zX9O1qwZUpVWu3DgESuG3Vnoy8+knL8K3DKrcSs+vbQNzMhYThHZbwyifTMqjykPKfylIXVCFAI9kqqWOEO6hU4Si0RHKUzKYJIKIhBEQkFnCcJGieyyaNAvMnhYymgaNIucrLu7t9PsnVqzw1rRmVj6hqlppdq6rcPaxrROTleFeoHqHX1es6x095bQGCfKxjry2zUemo/in1E65r61evsbSpFu2WmDErztlR7JDe/Kb6nGSSSe57qBmZX1tWqMMahqPCAEjKm1MJU7rdKXblSFdSpsfU+vhSowNqkN/j2US1MBDarIKm1CybUYym2qEK0WGYhCJCP4Uk+6UAQhBTcqHiEosoajHsomUUhE5Q2qyPCm1KHVL2l9JXH6ZW/SauA7hxXN3NOWldfvGOp1hVAgtMr4u+JwyjKPw+hrntEw9Aad7A8cEKEZWBo12LvTWQZc0ZXJRIX29WUZ4xlD5+UdZmCwpCaPCm1bpksKQmDMpoV6FqoRhOQhtynVLLHhSO6aMYTbUiCyKJi1CMEJ1LCHRIaY8qRKyhcMFr8nZmOVj9lnGJn3Ck4KkeU0YhSMLVBYCkJoUhTqF2iENqshTb7J1LJtwpt+yfblAtV6pZIjwpHfCs24U2q0tq4lQgp9qm1KLKOOYXYum+rtR6dumup1XGjOWrgNqm3CzlrjKKlGy/THqDpet2rGOqtpVYyHmF2l3yLhm6m4E+QVqJbV69pXFa3eWPBmQV6B036oX1hUZS1Auqs45Xzd3B6zest7m6gQqHMOVw2ldeaLqTGg3NOmT2JXZaNW1uKe6lUa8HuF5e2WH3QkxDAiBwl25lck61B/iBCT9KI5CsbISpcfGUQ09lmOtSMgpDQeFuM4KYsFGFlNoHurW27BlwwszsiCmEGkjAWRRt92ThXvdaUBuqVGsA7krrurdcaJpm5v6mm9wHAKz2yy8YwVDsnyaNIbnEADuuu9Qdb6RoVq8fOZUqgGGtdleW9Seq19dvfR0/fSp8SDK85vLy5v7l1e5que4+SvVq4c5ec1p2HqvrjUuort7fmObQnDeF1Mz//AFWhoKm1fRxwjGKhr0RowjCcNR2rVJZIhCMp49lIyrELZQETwpt8Ix5UoDHhTCYCBwlH2U6iHnCUjKf8IFWICfYKZ8JoUj2VosqnKbaJ4RjylFlgShGE20KFqdS0GBCim3uiAnUtwtanIOFwt/RlpwuwPBI4XHXNLc04Xy+Rr7Q9evKpYXTd4La/NvUdAecSu6wDkcFec3VN9Gu2szBaV3XQ9Rp31g0B0vaIKnw7fUzpy/8Ahytd/XDktsIxjhMhyvsU8QQhHsnz4Uz4SgkeyEKxCMpQQBNtTQpBRLJGUIVkIQlKTEKQCnLVAISgkBSAn2iVNqUK4nhTaVZCgGVaCfdRcrowsP1n/wAQftpzzErFvRb/ANQq/pjupbvpPsuUZ3snCp/9/hfwxY8lA84TkT2Q2+y6UhIKaCm291MkpMJZSPdAp4xwpt9kpSxhQDymhFKCQgR7J4RUmLC06lWi7dRqFhHcLntP621/Tmhrbuq9o7SuC2qBqxOrGfcJb0TTvVvVaLmi4oucPJK7TaesNm+BXt2t9yV4nGeJQDW/5QueXD1T+B7631Y0h3Zg/Kh9V9HAzsP5Xge0DsptBXL/AAMC3t136v2DWxRoNcfYrrOoeq+oVyf09MsHaCvN9jfCgkcBdMeFrx/B7divut9dvpabuqxp7SuBr1a1w4vr1C9x7lVQZTZXaNWOPqBVtwptAVhGUCPZa6rZYjKkJiJCEFKC90YRjCgaEoCAptCePZTalCuApGeU0KQnUAgJYHdPtygWK0FwjhNtU24SgmFMJ9nlTYEoJhGAm254TMpl7w0YUqhXhDCvr25oPDSZkSq9mOEjyEgKEAEQn2wEDABcTgcpPgcY5uFjVqctMBZbgkcyQvHljcO+MuvXtvIIhYel3z9L1IT/AMMnMrn7ilIMLgb60MEr5W/XlhlGePt7NeUZR1l6BRqtrUW1WmQ4SrAF0rpzWn0K4s7p30niV3cQWhwyDlfZ4vIjfjce3g3ap15VIAZQj2CfbCML19XG1f8AZHCYqQlFlUCbapthIxCkZQhWQIygtUFhTb3TQocKUWUgKQE0ZUI7qdQsKRKZRaosNohLGVbGIUhWi1RARAwnhTaVKLJGFE8FSMKUWSO6MJ4xwjtwhamFCJVhCEKdSyx2UhN+EISiwiFEY9ijBSiywpCaFEossYRCMKZ8K0WBQj2TwUEosu3KMAIohKCwhynIUAShXAUhWQpClFq9qO3yngqQFYgsoGFITQJRhWktXCEK2AhASi1e1HaE8KQpS2TajtTQFBwkQWWAgRnCc8IK9SyRlMMOEJiEISi0eS7+RJ+6SCQrIUjOFOvgtXGVwHUerss7U29N37rxGFyWranR02yc5zvrI+kLz7dWv791xVJO4yJXyfiHK6R8rD3L2cbT2+vL074AlIlOpC9TjbGqMELjrqgHA4XLuCx6tMOyuO3X2h1wyp1G7tnMqfMZgg9l2np7qBlemLW6dDx3JWDdWwLThcHXoVbet86kYcM4Xyrz4uzvg9Uxjux65PURkSDIRhdZ6d6hbcMFtdOioO5XaAQWyMhfoePycN+PbF8zbqy1zUliVO6PdFemIciqEJiAhBKtKRCE5Cm2QlBIRAPYJtsKbT2QKR5U7JoM5UIUoJBJTAYUhMBKoUDCkJo91OyBYyjBRwigUhSMo/hTKlAIqQZUlKAhSJTKJSWTajtTKJSkhTamhTslAbUIPhNPsVJKlIXb4UhNmUVaUu1SPZNlCSlBdqgamk+EYnslCvam2pohDKUBtQhOhCUFgqbQmiOykAq0tlhSE6BSkLCkIwjwlBYUjKblTkqUFhCPAThSMqiuDyptKeICkeyLZURwiAjtgScBKQu09lx+p6pb6baue94L4w2Via11Fb2FB1Kg8Pq/6ey6LUfd6ncmtcvLpOAvk834jGv/AF6/OT2aOLOX1Zellzd3Or3pq1XHbOAuQs7UiJClnZ7QMLl6NDaAvm6NE5T2y9vXs2REVD//2Q==
-          ICON
-
-          tr -d '[:space:]' < /tmp/sora_icon.b64 | base64 --decode > /tmp/sora_icon.jpg
-
-          "$RUNNER_TEMP/sora2-venv/bin/python" <<'PY'
-          from PIL import Image, ImageEnhance, ImageDraw
-          from pathlib import Path
-
-          src = Image.open("/tmp/sora_icon.jpg").convert("RGB")
-
-          # Primary icon, full-size (fixes the tiny-icon bug).
-          primary = src.resize((1024, 1024), Image.Resampling.LANCZOS)
-          primary.save("ProjectSora2/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png")
-
-          # Preview used inside the app.
-          primary.resize((320, 320), Image.Resampling.LANCZOS).save(
-              "ProjectSora2/Resources/AppIconPreview.png"
-          )
-
-          # Night variant.
-          night = ImageEnhance.Brightness(primary).enhance(0.42)
-          night = ImageEnhance.Contrast(night).enhance(1.18)
-
-          # Gold variant.
-          gold = primary.convert("RGBA")
-          overlay = Image.new("RGBA", gold.size, (255, 172, 35, 82))
-          gold = Image.alpha_composite(gold, overlay).convert("RGB")
-
-          # Santa event variant.
-          santa = primary.convert("RGBA")
-          draw = ImageDraw.Draw(santa)
-          draw.polygon(
-              [(370, 245), (555, 60), (720, 290)],
-              fill=(205, 28, 42, 255)
-          )
-          draw.rounded_rectangle(
-              (330, 235, 735, 330),
-              radius=45,
-              fill=(250, 250, 250, 255)
-          )
-          draw.ellipse(
-              (675, 72, 775, 172),
-              fill=(250, 250, 250, 255)
-          )
-          santa = santa.convert("RGB")
-
-          variants = {
-              "NightIcon": night,
-              "GoldIcon": gold,
-              "SantaIcon": santa,
-          }
-
-          for name, im in variants.items():
-              im.resize((120, 120), Image.Resampling.LANCZOS).save(
-                  f"ProjectSora2/Resources/{name}@2x.png"
-              )
-              im.resize((180, 180), Image.Resampling.LANCZOS).save(
-                  f"ProjectSora2/Resources/{name}@3x.png"
-              )
-              im.resize((320, 320), Image.Resampling.LANCZOS).save(
-                  f"ProjectSora2/Resources/{name}Preview.png"
-              )
-          PY
-
-          cat > ProjectSora2/Assets.xcassets/AppIcon.appiconset/Contents.json <<'JSON'
-          {
-            "images": [
-              {
-                "filename": "AppIcon-1024.png",
-                "idiom": "universal",
-                "platform": "ios",
-                "size": "1024x1024"
-              }
-            ],
-            "info": {
-              "author": "xcode",
-              "version": 1
-            }
-          }
-          JSON
-
-          cat > ProjectSora2/Assets.xcassets/Contents.json <<'JSON'
-          {
-            "info": {
-              "author": "xcode",
-              "version": 1
-            }
-          }
-          JSON
-
-          echo "===== CREATED FILES ====="
-          find ProjectSora2 -maxdepth 4 -type f -print | sort
-
-      - name: Generate Xcode project
-        run: |
-          set -euo pipefail
-          xcodegen generate
-          xcodebuild -project ProjectSora2.xcodeproj -list
-
-      - name: Build unsigned iPhone app
-        run: |
-          set -euo pipefail
-
-          xcodebuild \
-            -project ProjectSora2.xcodeproj \
-            -scheme ProjectSora2 \
-            -configuration Release \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -derivedDataPath "$PWD/DerivedData" \
-            ARCHS=arm64 \
-            ONLY_ACTIVE_ARCH=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            build \
-            2>&1 | tee xcodebuild.log
-
-      - name: Create IPA
-        run: |
-          set -euo pipefail
-
-          APP="$(find "$PWD/DerivedData/Build/Products/Release-iphoneos" -maxdepth 1 -type d -name "*.app" | head -1)"
-
-          if [ -z "$APP" ]; then
-            echo "ERROR: built .app not found"
-            exit 1
-          fi
-
-          rm -rf Payload output
-          mkdir -p Payload output
-          cp -R "$APP" Payload/
-
-          /usr/bin/zip -qry output/Project-Sora-2-v0.7.1-Fixed.ipa Payload
-
-          unzip -t output/Project-Sora-2-v0.7.1-Fixed.ipa
-          ls -lh output/Project-Sora-2-v0.7.1-Fixed.ipa
-
-      - name: Upload IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: Project-Sora-2-v0.7.1-Fixed-IPA
-          path: output/Project-Sora-2-v0.7.1-Fixed.ipa
-          if-no-files-found: error
-          compression-level: 0
-
-      - name: Upload build log if failed
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Project-Sora-2-v0.7.1-build-log
-          path: xcodebuild.log
-          if-no-files-found: ignore
+PROJECT SORA 2 — v0.8
+
+1. СТАРТ
+- Тёмно-синий звёздный фон.
+- По центру большая нормальная иконка Sora 2 с облаком.
+- Под ней название “Sora 2”.
+- Внизу одна большая белая кнопка “Старт”.
+- Никаких Apple/Google логинов.
+
+2. ПЕРВЫЙ ЗАПУСК
+После нажатия “Старт”:
+- если аккаунта ещё нет → экран “Создать аккаунт”;
+- выбрать ник;
+- создать локальный профиль;
+- профиль должен сохраняться после закрытия приложения;
+- второй раз регистрацию не показывать.
+
+3. ГЛАВНАЯ
+Интерфейс вертикальной видеоленты:
+- сверху “Подписки” / “Для вас”;
+- видео на весь экран;
+- справа лайк, комментарии, сохранить, поделиться;
+- снизу ник автора и описание;
+- свайп вверх/вниз между роликами.
+
+Нижнее меню:
+Главная | Обзор | + | Ачивки | Профиль
+
+Все разделы должны реально переключаться.
+
+4. КНОПКА +
+Открывает “Создать видео”.
+
+Экран:
+- большое поле “Описание нового видео…”;
+- выбор фото;
+- Cameo;
+- длительность 5 / 10 секунд;
+- формат 9:16 / 16:9 / 1:1;
+- 720p / 1080p;
+- стиль;
+- кнопка “Создать”.
+
+Не делать просто неподвижную картинку.
+Созданное задание должно появляться в “Мои видео”.
+
+Подготовить архитектуру для будущего backend/API:
+POST prompt + image + duration + ratio + quality
+→ job ID
+→ статус генерации
+→ готовый MP4.
+
+5. ПРОФИЛЬ
+- аватар;
+- @nickname;
+- количество созданных видео;
+- ачивки;
+- коллекция иконок;
+- “Мои видео”;
+- настройки.
+
+НЕ ПОКАЗЫВАТЬ КРЕДИТЫ.
+В Project Sora 2 нет системы кредитов.
+
+6. АЧИВКИ
+Примеры:
+
+“Первое видео”
+Создать 1 видео.
+Награда: Night Icon.
+
+“Режиссёр”
+Создать 10 видео.
+Награда: Gold Icon.
+
+“Image to Video”
+Первый раз использовать фотографию.
+
+“Sora Master”
+Создать 25 видео.
+
+Ачивки должны храниться локально и не сбрасываться после перезапуска.
+
+7. EVENT ИКОНКИ
+
+ВАЖНО:
+
+Обычные иконки можно открыть обычными ачивками.
+
+Но специальные event-иконки можно ПОЛУЧИТЬ ТОЛЬКО во время соответствующего события.
+
+🎃 Halloween
+Доступ получения только во время Halloween Event.
+
+🎄 New Year
+Доступ получения только во время New Year Event.
+
+❤️ Valentine
+Только во время Valentine Event.
+
+🎂 Anniversary
+Только во время Anniversary Event.
+
+Если пользователь открыл event-иконку во время события:
+ОНА ОСТАЁТСЯ У НЕГО НАВСЕГДА.
+
+После окончания события её всё равно можно выбирать в коллекции.
+
+Если пользователь не получил её во время события:
+она остаётся закрытой до следующего события.
+
+Сохранять полученные event-иконки через UserDefaults.
+
+8. ИКОНКИ ПРИЛОЖЕНИЯ
+Использовать iOS Alternate App Icons.
+
+В профиле:
+“Иконки приложения”
+
+Показывать:
+- Original
+- Night
+- Gold
+- Halloween
+- New Year
+- Valentine
+- Anniversary
+
+Заблокированные иконки показывать с 🔒.
+
+После разблокировки пользователь может менять иконку приложения прямо из Sora 2.
+
+9. ОБЗОР
+Добавить стили:
+- Cinematic
+- Realistic
+- Anime
+- VHS
+- Horror
+- Game Trailer
+- Meme
+- Music Video
+
+Добавить блок активного события.
+
+10. СОБЫТИЯ
+Во время события менять:
+- оформление;
+- баннер;
+- специальные ачивки;
+- event icon;
+- небольшие пасхалки.
+
+Не удалять полученные награды после окончания события.
+
+11. ДИЗАЙН
+Не делать обычный стандартный SwiftUI-прототип.
+
+Стиль:
+- чёрный / тёмно-синий;
+- плавные прозрачные панели;
+- большие скругления;
+- интерфейс похож по удобству на современную вертикальную видеоленту;
+- анимации открытия экранов;
+- нормальный полноэкранный интерфейс iPhone.
+
+12. СОХРАНЕНИЕ
+UserDefaults:
+- профиль;
+- ник;
+- количество созданных видео;
+- ачивки;
+- разблокированные обычные иконки;
+- НАВСЕГДА разблокированные event icons;
+- выбранная иконка;
+- настройки.
+
+Ничего из этого не должно исчезать после перезапуска приложения.
+
+13. ИКОНКА
+Использовать большую Sora 2 cloud icon.
+Не повторять баг, когда облачко было микроскопическим.
+Иконка должна занимать почти всю площадь 1024×1024.
+
+14. ВЕРСИЯ
+Project Sora 2
+Version 0.8
+Build: Near Final
