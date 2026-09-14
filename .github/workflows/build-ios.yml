@@ -1,0 +1,110 @@
+name: Build Project Sora 2 IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        run: |
+          set -e
+          xcodegen generate
+
+          echo "===== GENERATED FILES ====="
+          ls -la
+
+          echo "===== XCODE PROJECT ====="
+          find . -maxdepth 2 -name "*.xcodeproj" -print
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build unsigned iOS app
+        run: |
+          set -euo pipefail
+
+          xcodebuild \
+            -project ProjectSora2.xcodeproj \
+            -scheme ProjectSora2 \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -derivedDataPath "$PWD/DerivedData" \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build \
+            2>&1 | tee xcodebuild.log
+
+      - name: Find built app
+        run: |
+          echo "===== BUILT APPS ====="
+          find DerivedData -type d -name "*.app" -print
+
+      - name: Create unsigned IPA
+        run: |
+          set -euo pipefail
+
+          APP="$(
+            find "$PWD/DerivedData/Build/Products/Release-iphoneos" \
+              -maxdepth 1 \
+              -type d \
+              -name "*.app" \
+              | head -1
+          )"
+
+          if [ -z "$APP" ]; then
+            echo "ERROR: Built .app not found"
+            exit 1
+          fi
+
+          echo "APP=$APP"
+
+          rm -rf Payload output
+          mkdir -p Payload output
+
+          cp -R "$APP" Payload/
+
+          /usr/bin/zip \
+            -qry \
+            output/Project-Sora-2-v0.4-unsigned.ipa \
+            Payload
+
+          echo "===== CHECK IPA ====="
+          unzip -t output/Project-Sora-2-v0.4-unsigned.ipa
+
+          echo "===== IPA SIZE ====="
+          ls -lh output/Project-Sora-2-v0.4-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Project-Sora-2-v0.4-unsigned
+          path: output/Project-Sora-2-v0.4-unsigned.ipa
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Upload build log if failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Project-Sora-2-build-log
+          path: xcodebuild.log
+          if-no-files-found: ignore
