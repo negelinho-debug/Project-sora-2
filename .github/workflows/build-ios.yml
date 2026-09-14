@@ -1,4 +1,4 @@
-name: Build Project Sora 2 IPA
+name: Build Project Sora 2 v0.6
 
 on:
   workflow_dispatch:
@@ -17,23 +17,33 @@ jobs:
           brew install xcodegen
           xcodegen --version
 
-      # ==========================================================
-      # CREATE PROJECT
-      # ==========================================================
-
-      - name: Create Project Sora 2
+      - name: Check cloud icon
         run: |
           set -e
 
+          if [ ! -f "Sora_cloud_exact_transparent.png" ]; then
+            echo "ERROR: Sora_cloud_exact_transparent.png not found"
+            exit 1
+          fi
+
+      - name: Create Project Sora 2
+        run: |
+          set -euo pipefail
+
           rm -rf ProjectSora2
-          mkdir -p ProjectSora2
+          mkdir -p ProjectSora2/Resources
+          mkdir -p ProjectSora2/Assets.xcassets/AppIcon.appiconset
+
+          cp \
+            Sora_cloud_exact_transparent.png \
+            ProjectSora2/Resources/soraCloud.png
 
           cat > project.yml <<'EOF'
           name: ProjectSora2
 
           options:
             deploymentTarget:
-              iOS: "15.0"
+              iOS: "16.0"
 
           targets:
             ProjectSora2:
@@ -42,59 +52,79 @@ jobs:
 
               sources:
                 - path: ProjectSora2
+                  excludes:
+                    - Resources
+
+              resources:
+                - path: ProjectSora2/Resources
 
               settings:
                 base:
-                  PRODUCT_BUNDLE_IDENTIFIER: com.projectsora2.app
+                  PRODUCT_BUNDLE_IDENTIFIER: com.projectsora2.v06
                   PRODUCT_NAME: "Sora 2"
                   SWIFT_VERSION: "5.0"
-                  TARGETED_DEVICE_FAMILY: "1,2"
-
+                  TARGETED_DEVICE_FAMILY: "1"
                   GENERATE_INFOPLIST_FILE: YES
                   INFOPLIST_KEY_CFBundleDisplayName: "Sora 2"
                   INFOPLIST_KEY_UILaunchScreen_Generation: YES
+                  INFOPLIST_KEY_NSPhotoLibraryUsageDescription: "Выберите фото для видео"
                   INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
+                  ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
           EOF
 
-          cat > ProjectSora2/ProjectSora2App.swift <<'EOF'
+          cat > ProjectSora2/Main.swift <<'EOF'
           import SwiftUI
+          import PhotosUI
 
           @main
           struct ProjectSora2App: App {
               var body: some Scene {
                   WindowGroup {
                       RootView()
+                          .preferredColorScheme(.dark)
                   }
               }
           }
-          EOF
-
-          cat > ProjectSora2/RootView.swift <<'EOF'
-          import SwiftUI
 
           struct RootView: View {
 
               @State private var started = false
+              @State private var showCreate = false
 
               var body: some View {
+
                   ZStack {
 
-                      StarBackground()
-
                       if started {
-                          GeneratorView()
+
+                          FeedView(
+                              showCreate: $showCreate
+                          )
+
                       } else {
+
                           StartView {
-                              withAnimation(.easeInOut(duration: 0.25)) {
+
+                              withAnimation(
+                                  .easeInOut(duration: 0.3)
+                              ) {
                                   started = true
                               }
                           }
                       }
                   }
-                  .preferredColorScheme(.dark)
+                  .sheet(
+                      isPresented: $showCreate
+                  ) {
+                      CreateVideoView()
+                  }
               }
           }
 
+
+          // =====================================================
+          // START
+          // =====================================================
 
           struct StartView: View {
 
@@ -102,226 +132,719 @@ jobs:
 
               var body: some View {
 
-                  VStack {
+                  ZStack {
 
-                      Spacer()
+                      StarBackground()
 
-                      CloudLogo()
-                          .frame(width: 150, height: 130)
+                      VStack {
 
-                      Text("Sora 2")
-                          .font(
-                              .system(
-                                  size: 58,
-                                  weight: .semibold,
-                                  design: .rounded
+                          Spacer()
+
+                          Image("soraCloud")
+                              .resizable()
+                              .scaledToFit()
+                              .frame(
+                                  width: 155,
+                                  height: 155
                               )
-                          )
-                          .foregroundColor(.white)
-                          .padding(.top, 15)
 
-                      Text("Project Sora 2")
-                          .font(.system(size: 17))
-                          .foregroundColor(
-                              .white.opacity(0.55)
-                          )
-                          .padding(.top, 4)
-
-                      Spacer()
-
-                      Button(action: start) {
-
-                          Text("Начать")
+                          Text("Sora 2")
                               .font(
                                   .system(
-                                      size: 22,
-                                      weight: .semibold
+                                      size: 48,
+                                      weight: .semibold,
+                                      design: .rounded
+                                  )
+                              )
+                              .foregroundColor(.white)
+                              .padding(.top, 8)
+
+                          Spacer()
+
+                          Button(
+                              action: start
+                          ) {
+
+                              Text("Старт")
+                                  .font(
+                                      .system(
+                                          size: 21,
+                                          weight: .semibold
+                                      )
+                                  )
+                                  .foregroundColor(.black)
+                                  .frame(
+                                      maxWidth: .infinity
+                                  )
+                                  .frame(height: 60)
+                                  .background(.white)
+                                  .clipShape(
+                                      Capsule()
+                                  )
+                          }
+                          .padding(.horizontal, 28)
+                          .padding(.bottom, 44)
+                      }
+                  }
+              }
+          }
+
+
+          // =====================================================
+          // FEED
+          // =====================================================
+
+          struct FeedView: View {
+
+              @Binding var showCreate: Bool
+
+              var body: some View {
+
+                  ZStack {
+
+                      Color.black
+                          .ignoresSafeArea()
+
+                      VStack(spacing: 0) {
+
+                          HStack(spacing: 22) {
+
+                              Text("Подписки")
+                                  .foregroundColor(
+                                      .white.opacity(0.55)
+                                  )
+
+                              Text("Для вас")
+                                  .fontWeight(.bold)
+                                  .foregroundColor(.white)
+                          }
+                          .font(.system(size: 16))
+                          .padding(.top, 10)
+
+                          Spacer()
+
+                          ZStack(
+                              alignment: .bottom
+                          ) {
+
+                              LinearGradient(
+                                  colors: [
+                                      Color(
+                                          red: 0.04,
+                                          green: 0.12,
+                                          blue: 0.24
+                                      ),
+
+                                      Color(
+                                          red: 0.01,
+                                          green: 0.02,
+                                          blue: 0.05
+                                      )
+                                  ],
+                                  startPoint: .top,
+                                  endPoint: .bottom
+                              )
+
+                              StarBackground()
+                                  .opacity(0.8)
+
+                              VStack {
+
+                                  Spacer()
+
+                                  Image("soraCloud")
+                                      .resizable()
+                                      .scaledToFit()
+                                      .frame(
+                                          width: 120,
+                                          height: 120
+                                      )
+
+                                  Text("Sora 2")
+                                      .font(
+                                          .system(
+                                              size: 34,
+                                              weight: .semibold
+                                          )
+                                      )
+                                      .foregroundColor(.white)
+
+                                  Spacer()
+                              }
+
+                              HStack(
+                                  alignment: .bottom
+                              ) {
+
+                                  VStack(
+                                      alignment: .leading,
+                                      spacing: 7
+                                  ) {
+
+                                      Text("@project_sora2")
+                                          .fontWeight(.bold)
+
+                                      Text(
+                                          "Твои созданные видео будут появляться здесь"
+                                      )
+                                      .font(.system(size: 14))
+
+                                      HStack {
+
+                                          Image(
+                                              systemName:
+                                                  "music.note"
+                                          )
+
+                                          Text(
+                                              "Project Sora 2"
+                                          )
+                                      }
+                                      .font(.system(size: 13))
+                                  }
+                                  .foregroundColor(.white)
+
+                                  Spacer()
+
+                                  VStack(spacing: 20) {
+
+                                      SideButton(
+                                          icon:
+                                              "person.crop.circle.fill",
+                                          text: ""
+                                      )
+
+                                      SideButton(
+                                          icon: "heart.fill",
+                                          text: "0"
+                                      )
+
+                                      SideButton(
+                                          icon:
+                                              "bubble.right.fill",
+                                          text: "0"
+                                      )
+
+                                      SideButton(
+                                          icon:
+                                              "bookmark.fill",
+                                          text: ""
+                                      )
+
+                                      SideButton(
+                                          icon:
+                                              "arrowshape.turn.up.right.fill",
+                                          text: ""
+                                      )
+                                  }
+                              }
+                              .padding(18)
+                          }
+                          .clipShape(
+                              RoundedRectangle(
+                                  cornerRadius: 28
+                              )
+                          )
+                          .padding(.horizontal, 8)
+                          .padding(.top, 14)
+
+                          bottomBar
+                      }
+                  }
+              }
+
+
+              var bottomBar: some View {
+
+                  HStack {
+
+                      TabButton(
+                          icon: "house.fill",
+                          title: "Главная"
+                      )
+
+                      Spacer()
+
+                      TabButton(
+                          icon: "safari.fill",
+                          title: "Обзор"
+                      )
+
+                      Spacer()
+
+                      Button {
+
+                          showCreate = true
+
+                      } label: {
+
+                          ZStack {
+
+                              RoundedRectangle(
+                                  cornerRadius: 9
+                              )
+                              .fill(.white)
+                              .frame(
+                                  width: 56,
+                                  height: 36
+                              )
+
+                              Image(
+                                  systemName: "plus"
+                              )
+                              .font(
+                                  .system(
+                                      size: 20,
+                                      weight: .bold
                                   )
                               )
                               .foregroundColor(.black)
-                              .frame(maxWidth: .infinity)
-                              .frame(height: 64)
-                              .background(Color.white)
-                              .clipShape(Capsule())
+                          }
                       }
-                      .padding(.horizontal, 30)
-                      .padding(.bottom, 45)
-                  }
-              }
-          }
-
-
-          struct GeneratorView: View {
-
-              var body: some View {
-
-                  VStack(spacing: 18) {
 
                       Spacer()
 
-                      CloudLogo()
-                          .frame(width: 105, height: 90)
-
-                      Text("Sora 2")
-                          .font(
-                              .system(
-                                  size: 40,
-                                  weight: .semibold,
-                                  design: .rounded
-                              )
-                          )
-                          .foregroundColor(.white)
-
-                      Text("Генератор")
-                          .font(.system(size: 21))
-                          .foregroundColor(
-                              .white.opacity(0.75)
-                          )
-
-                      Text("Первый тест Project Sora 2")
-                          .font(.system(size: 15))
-                          .foregroundColor(
-                              .white.opacity(0.45)
-                          )
-
-                      Spacer()
-                  }
-              }
-          }
-
-
-          struct CloudLogo: View {
-
-              var body: some View {
-
-                  ZStack {
-
-                      RoundedRectangle(
-                          cornerRadius: 45,
-                          style: .continuous
+                      TabButton(
+                          icon: "bell.fill",
+                          title: "Активность"
                       )
-                      .fill(
-                          LinearGradient(
-                              colors: [
-                                  Color.white,
-                                  Color(
-                                      red: 0.42,
-                                      green: 0.72,
-                                      blue: 1.0
+
+                      Spacer()
+
+                      TabButton(
+                          icon: "person.fill",
+                          title: "Профиль"
+                      )
+                  }
+                  .padding(.horizontal, 17)
+                  .padding(.top, 10)
+                  .padding(.bottom, 12)
+                  .background(.black)
+              }
+          }
+
+
+          struct SideButton: View {
+
+              let icon: String
+              let text: String
+
+              var body: some View {
+
+                  VStack(spacing: 3) {
+
+                      Image(
+                          systemName: icon
+                      )
+                      .font(
+                          .system(
+                              size: 28,
+                              weight: .semibold
+                          )
+                      )
+
+                      if !text.isEmpty {
+
+                          Text(text)
+                              .font(
+                                  .system(
+                                      size: 12,
+                                      weight: .semibold
                                   )
-                              ],
-                              startPoint: .top,
-                              endPoint: .bottom
-                          )
-                      )
-                      .frame(
-                          width: 128,
-                          height: 88
-                      )
-
-                      Circle()
-                          .fill(Color.white)
-                          .frame(
-                              width: 65,
-                              height: 65
-                          )
-                          .offset(
-                              x: -29,
-                              y: -18
-                          )
-
-                      Circle()
-                          .fill(Color.white)
-                          .frame(
-                              width: 72,
-                              height: 72
-                          )
-                          .offset(
-                              x: 18,
-                              y: -22
-                          )
-
-                      HStack(spacing: 17) {
-
-                          Eye()
-
-                          Eye()
+                              )
                       }
-                      .offset(y: 5)
                   }
-                  .shadow(
-                      color: .black.opacity(0.25),
-                      radius: 14,
-                      y: 7
-                  )
+                  .foregroundColor(.white)
               }
           }
 
 
-          struct Eye: View {
+          struct TabButton: View {
+
+              let icon: String
+              let title: String
+
+              var body: some View {
+
+                  VStack(spacing: 3) {
+
+                      Image(
+                          systemName: icon
+                      )
+                      .font(.system(size: 19))
+
+                      Text(title)
+                          .font(.system(size: 10))
+                  }
+                  .foregroundColor(.white)
+              }
+          }
+
+
+          // =====================================================
+          // CREATE VIDEO
+          // =====================================================
+
+          struct CreateVideoView: View {
+
+              @Environment(\.dismiss)
+              var dismiss
+
+              @State private var prompt = ""
+
+              @State private var photo:
+                  PhotosPickerItem?
+
+              @State private var cameo = false
 
               var body: some View {
 
                   ZStack {
 
-                      Capsule()
-                          .fill(
-                              Color(
-                                  red: 0.01,
-                                  green: 0.06,
-                                  blue: 0.13
-                              )
-                          )
-                          .frame(
-                              width: 28,
-                              height: 44
-                          )
+                      Color.black
+                          .ignoresSafeArea()
 
-                      Image(systemName: "sparkle")
+                      VStack(spacing: 0) {
+
+                          header
+
+                          Spacer()
+
+                          VStack(spacing: 14) {
+
+                              promptBox
+
+                              HStack(spacing: 8) {
+
+                                  OptionChip(
+                                      title: "10 сек"
+                                  )
+
+                                  OptionChip(
+                                      title: "9:16"
+                                  )
+
+                                  OptionChip(
+                                      title: "1080p"
+                                  )
+
+                                  Spacer()
+                              }
+
+                              Button {
+
+                              } label: {
+
+                                  HStack {
+
+                                      Image(
+                                          systemName: "sparkles"
+                                      )
+
+                                      Text("Создать")
+                                  }
+                                  .font(
+                                      .system(
+                                          size: 18,
+                                          weight: .bold
+                                      )
+                                  )
+                                  .foregroundColor(.black)
+                                  .frame(
+                                      maxWidth: .infinity
+                                  )
+                                  .frame(height: 58)
+                                  .background(.white)
+                                  .clipShape(
+                                      Capsule()
+                                  )
+                              }
+                          }
+                          .padding(.horizontal, 15)
+                          .padding(.bottom, 18)
+                      }
+                  }
+              }
+
+
+              var header: some View {
+
+                  HStack {
+
+                      Button {
+
+                          dismiss()
+
+                      } label: {
+
+                          Image(
+                              systemName: "xmark"
+                          )
                           .font(
                               .system(
-                                  size: 12,
+                                  size: 17,
                                   weight: .bold
                               )
                           )
                           .foregroundColor(.white)
-                          .offset(
-                              x: -2,
-                              y: -5
+                          .frame(
+                              width: 38,
+                              height: 38
+                          )
+                          .background(
+                              .white.opacity(0.08)
+                          )
+                          .clipShape(
+                              Circle()
+                          )
+                      }
+
+                      Spacer()
+
+                      VStack(spacing: 2) {
+
+                          Text("Создать видео")
+                              .font(
+                                  .system(
+                                      size: 18,
+                                      weight: .bold
+                                  )
+                              )
+
+                          Text("Sora 2")
+                              .font(
+                                  .system(size: 12)
+                              )
+                              .foregroundColor(
+                                  .white.opacity(0.48)
+                              )
+                      }
+                      .foregroundColor(.white)
+
+                      Spacer()
+
+                      Color.clear
+                          .frame(
+                              width: 38,
+                              height: 38
                           )
                   }
+                  .padding(.horizontal, 15)
+                  .padding(.top, 8)
+              }
+
+
+              var promptBox: some View {
+
+                  ZStack(
+                      alignment: .topLeading
+                  ) {
+
+                      RoundedRectangle(
+                          cornerRadius: 26
+                      )
+                      .fill(
+                          Color.white.opacity(0.05)
+                      )
+                      .overlay {
+
+                          RoundedRectangle(
+                              cornerRadius: 26
+                          )
+                          .stroke(
+                              Color.white.opacity(0.20),
+                              lineWidth: 1.2
+                          )
+                      }
+
+                      if prompt.isEmpty {
+
+                          Text(
+                              "Описание нового видео…"
+                          )
+                          .font(.system(size: 17))
+                          .foregroundColor(
+                              .white.opacity(0.38)
+                          )
+                          .padding(.top, 18)
+                          .padding(.leading, 18)
+                      }
+
+                      TextEditor(
+                          text: $prompt
+                      )
+                      .scrollContentBackground(.hidden)
+                      .background(.clear)
+                      .foregroundColor(.white)
+                      .font(.system(size: 17))
+                      .padding(.horizontal, 12)
+                      .padding(.top, 9)
+                      .padding(.bottom, 58)
+
+                      HStack(spacing: 9) {
+
+                          PhotosPicker(
+                              selection: $photo,
+                              matching: .images
+                          ) {
+
+                              HStack(spacing: 6) {
+
+                                  Image(
+                                      systemName: "photo"
+                                  )
+
+                                  Text("Фото")
+                              }
+                              .font(
+                                  .system(
+                                      size: 14,
+                                      weight: .semibold
+                                  )
+                              )
+                              .foregroundColor(.white)
+                              .padding(
+                                  .horizontal,
+                                  12
+                              )
+                              .frame(height: 38)
+                              .background(
+                                  .white.opacity(0.09)
+                              )
+                              .clipShape(
+                                  Capsule()
+                              )
+                          }
+
+                          Button {
+
+                              cameo.toggle()
+
+                          } label: {
+
+                              HStack(spacing: 6) {
+
+                                  Image(
+                                      systemName:
+                                          "person.2.fill"
+                                  )
+
+                                  Text("Камео")
+                              }
+                              .font(
+                                  .system(
+                                      size: 14,
+                                      weight: .semibold
+                                  )
+                              )
+                              .foregroundColor(.white)
+                              .padding(
+                                  .horizontal,
+                                  12
+                              )
+                              .frame(height: 38)
+                              .background(
+                                  cameo
+                                  ? .white.opacity(0.2)
+                                  : .white.opacity(0.09)
+                              )
+                              .clipShape(
+                                  Capsule()
+                              )
+                          }
+
+                          Spacer()
+
+                          Image(
+                              systemName: "waveform"
+                          )
+                          .foregroundColor(
+                              .white.opacity(0.75)
+                          )
+                          .frame(
+                              width: 38,
+                              height: 38
+                          )
+                          .background(
+                              .white.opacity(0.09)
+                          )
+                          .clipShape(
+                              Circle()
+                          )
+                      }
+                      .padding(.horizontal, 13)
+                      .padding(.bottom, 11)
+                      .frame(
+                          maxHeight: .infinity,
+                          alignment: .bottom
+                      )
+                  }
+                  .frame(height: 215)
               }
           }
 
 
+          struct OptionChip: View {
+
+              let title: String
+
+              var body: some View {
+
+                  Text(title)
+                      .font(
+                          .system(
+                              size: 13,
+                              weight: .semibold
+                          )
+                      )
+                      .foregroundColor(.white)
+                      .padding(
+                          .horizontal,
+                          12
+                      )
+                      .frame(height: 34)
+                      .background(
+                          .white.opacity(0.08)
+                      )
+                      .clipShape(
+                          Capsule()
+                      )
+              }
+          }
+
+
+          // =====================================================
+          // BACKGROUND
+          // =====================================================
+
           struct StarBackground: View {
 
-              let stars: [(Double, Double, Double)] = [
+              let stars:
+                  [(Double, Double, Double)] = [
 
-                  (0.08,0.08,2),
+                  (0.07,0.08,2),
                   (0.18,0.16,1),
-                  (0.31,0.10,2),
-                  (0.46,0.21,1),
-                  (0.62,0.09,2),
-                  (0.82,0.15,1),
+                  (0.31,0.09,2),
+                  (0.45,0.20,1),
+                  (0.63,0.08,2),
+                  (0.84,0.16,1),
 
-                  (0.11,0.33,1),
+                  (0.11,0.35,1),
                   (0.27,0.29,2),
-                  (0.44,0.35,1),
-                  (0.72,0.31,2),
-                  (0.91,0.38,1),
+                  (0.48,0.39,1),
+                  (0.71,0.31,2),
+                  (0.91,0.40,1),
 
-                  (0.06,0.52,2),
-                  (0.22,0.61,1),
-                  (0.40,0.55,2),
-                  (0.63,0.64,1),
-                  (0.84,0.56,2),
+                  (0.07,0.56,2),
+                  (0.24,0.63,1),
+                  (0.43,0.54,2),
+                  (0.66,0.63,1),
+                  (0.88,0.57,2),
 
-                  (0.13,0.79,2),
-                  (0.32,0.84,1),
-                  (0.56,0.76,2),
-                  (0.79,0.87,1),
-                  (0.94,0.74,2)
+                  (0.15,0.79,2),
+                  (0.35,0.85,1),
+                  (0.59,0.76,2),
+                  (0.82,0.87,1)
               ]
 
               var body: some View {
@@ -335,20 +858,20 @@ jobs:
 
                                   Color(
                                       red: 0.002,
-                                      green: 0.035,
-                                      blue: 0.09
+                                      green: 0.025,
+                                      blue: 0.07
                                   ),
 
                                   Color(
-                                      red: 0.01,
-                                      green: 0.09,
-                                      blue: 0.18
+                                      red: 0.005,
+                                      green: 0.075,
+                                      blue: 0.17
                                   ),
 
                                   Color(
                                       red: 0.002,
-                                      green: 0.025,
-                                      blue: 0.06
+                                      green: 0.02,
+                                      blue: 0.055
                                   )
                               ],
                               startPoint: .top,
@@ -362,20 +885,29 @@ jobs:
 
                               Circle()
                                   .fill(
-                                      Color.white.opacity(0.75)
+                                      Color.white.opacity(
+                                          0.72
+                                      )
                                   )
                                   .frame(
-                                      width: stars[index].2,
-                                      height: stars[index].2
+                                      width:
+                                          stars[index].2,
+
+                                      height:
+                                          stars[index].2
                                   )
                                   .position(
 
                                       x:
-                                          geometry.size.width
+                                          geometry
+                                              .size
+                                              .width
                                           * stars[index].0,
 
                                       y:
-                                          geometry.size.height
+                                          geometry
+                                              .size
+                                              .height
                                           * stars[index].1
                                   )
                           }
@@ -386,30 +918,64 @@ jobs:
           }
           EOF
 
-          echo "===== PROJECT FILES ====="
-          find . -maxdepth 3 -type f | sort
+          # ======================================================
+          # APP ICON
+          # ======================================================
 
-      # ==========================================================
-      # GENERATE XCODE PROJECT
-      # ==========================================================
+          sips \
+            -s format jpeg \
+            Sora_cloud_exact_transparent.png \
+            --out /tmp/cloud.jpg \
+            >/dev/null
+
+          sips \
+            --padToHeightWidth 1024 1024 \
+            --padColor 07152B \
+            /tmp/cloud.jpg \
+            --out /tmp/icon.jpg \
+            >/dev/null
+
+          sips \
+            -s format png \
+            /tmp/icon.jpg \
+            --out ProjectSora2/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png \
+            >/dev/null
+
+          cat > ProjectSora2/Assets.xcassets/AppIcon.appiconset/Contents.json <<'EOF'
+          {
+            "images": [
+              {
+                "filename": "AppIcon-1024.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              }
+            ],
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          EOF
+
+          cat > ProjectSora2/Assets.xcassets/Contents.json <<'EOF'
+          {
+            "info": {
+              "author": "xcode",
+              "version": 1
+            }
+          }
+          EOF
 
       - name: Generate Xcode project
         run: |
           set -e
-
-          echo "===== PROJECT.YML ====="
-          cat project.yml
-
           xcodegen generate
+          xcodebuild \
+            -project ProjectSora2.xcodeproj \
+            -list
 
-          echo "===== XCODE PROJECT ====="
-          find . -maxdepth 2 -name "*.xcodeproj" -print
-
-      # ==========================================================
-      # BUILD
-      # ==========================================================
-
-      - name: Build unsigned iOS app
+      - name: Build iPhone app
         run: |
           set -euo pipefail
 
@@ -422,18 +988,14 @@ jobs:
             -derivedDataPath "$PWD/DerivedData" \
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
-            IPHONEOS_DEPLOYMENT_TARGET=15.0 \
+            IPHONEOS_DEPLOYMENT_TARGET=16.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             build \
             2>&1 | tee xcodebuild.log
 
-      # ==========================================================
-      # IPA
-      # ==========================================================
-
-      - name: Create unsigned IPA
+      - name: Create IPA
         run: |
           set -euo pipefail
 
@@ -446,10 +1008,8 @@ jobs:
               | head -1
           )"
 
-          echo "APP=$APP"
-
           if [ -z "$APP" ]; then
-            echo "ERROR: .app not found"
+            echo "ERROR: app not found"
             exit 1
           fi
 
@@ -462,39 +1022,29 @@ jobs:
 
           /usr/bin/zip \
             -qry \
-            output/Project-Sora-2-v0.4.ipa \
+            output/Project-Sora-2-v0.6.ipa \
             Payload
-
-          echo "===== TEST IPA ====="
 
           unzip \
             -t \
-            output/Project-Sora-2-v0.4.ipa
-
-          echo "===== IPA ====="
+            output/Project-Sora-2-v0.6.ipa
 
           ls \
             -lh \
-            output/Project-Sora-2-v0.4.ipa
-
-      # ==========================================================
-      # DOWNLOAD
-      # ==========================================================
+            output/Project-Sora-2-v0.6.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
-
         with:
-          name: Project-Sora-2-v0.4-IPA
-          path: output/Project-Sora-2-v0.4.ipa
+          name: Project-Sora-2-v0.6-IPA
+          path: output/Project-Sora-2-v0.6.ipa
           if-no-files-found: error
           compression-level: 0
 
       - name: Upload log if failed
         if: failure()
         uses: actions/upload-artifact@v4
-
         with:
-          name: Sora-2-build-log
+          name: Sora-2-v0.6-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
