@@ -1856,7 +1856,7 @@ jobs:
               @State private var photoData: Data?
               @State private var duration = 10
               @State private var ratio = "9:16"
-              @State private var resolution = "1080p"
+              @State private var resolution = "720p"
 
               @State private var isGenerating = false
               @State private var generationProgress = 0
@@ -1989,9 +1989,9 @@ jobs:
                                       }
 
                                       SelectorChip(title: resolution) {
-                                          resolution = resolution == "1080p"
-                                              ? "720p"
-                                              : "1080p"
+                                          resolution = resolution == "720p"
+                                              ? "480p"
+                                              : "720p"
                                       }
 
                                       Spacer()
@@ -2215,7 +2215,7 @@ jobs:
                               dialogTitle = "Генератор не подключён"
                               dialogMessage =
                                   error.localizedDescription
-                                  + "\\n\\nИнтерфейс уже полностью готов. Когда подключим backend, менять IPA-логику генерации больше не придётся."
+                                  + "\n\nИнтерфейс уже полностью готов. Когда подключим backend, менять IPA-логику генерации больше не придётся."
                               showDialog = true
                           }
                       }
