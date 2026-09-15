@@ -1,4 +1,4 @@
-name: Build Project Sora 2 v0.10 Dola Seedance Bridge
+name: Build Project Sora 2 v1.1 Final Backend Ready
 
 on:
   workflow_dispatch:
@@ -26,6 +26,9 @@ jobs:
 
       - name: Create Project Sora 2
         shell: bash
+        env:
+          VIDEO_BACKEND_URL: ${{ secrets.VIDEO_BACKEND_URL }}
+          VIDEO_BACKEND_TOKEN: ${{ secrets.VIDEO_BACKEND_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -84,9 +87,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
               <key>CFBundleShortVersionString</key>
-              <string>0.10</string>
+              <string>1.1</string>
               <key>CFBundleVersion</key>
-              <string>10</string>
+              <string>11</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -94,10 +97,6 @@ jobs:
               <string>Выберите фото для создания видео</string>
               <key>NSPhotoLibraryAddUsageDescription</key>
               <string>Сохраняйте готовые видео Project Sora 2 в Фото</string>
-              <key>LSApplicationQueriesSchemes</key>
-              <array>
-                  <string>cici</string>
-              </array>
               <key>UILaunchScreen</key>
               <dict/>
               <key>UISupportedInterfaceOrientations</key>
@@ -174,6 +173,15 @@ jobs:
           </plist>
           PLIST
 
+          cat > ProjectSora2/BackendConfig.swift <<SWIFTCONFIG
+          import Foundation
+
+          enum BackendConfig {
+              static let baseURL = "${VIDEO_BACKEND_URL:-}"
+              static let token = "${VIDEO_BACKEND_TOKEN:-}"
+          }
+          SWIFTCONFIG
+
           cat > ProjectSora2/Main.swift <<'SWIFT'
           import SwiftUI
           import PhotosUI
@@ -181,6 +189,248 @@ jobs:
           import AVKit
           import UniformTypeIdentifiers
           import UIKit
+
+          struct BackendCreateResponse: Decodable {
+              let id: String
+              let status: String?
+          }
+
+          struct BackendStatusResponse: Decodable {
+              let id: String
+              let status: String
+              let progress: Int?
+              let result_url: String?
+              let error: String?
+          }
+
+          enum VideoBackendError: LocalizedError {
+              case notConfigured
+              case invalidURL
+              case server(String)
+              case failed(String)
+
+              var errorDescription: String? {
+                  switch self {
+                  case .notConfigured:
+                      return "Backend пока не подключён."
+                  case .invalidURL:
+                      return "Неверный адрес backend."
+                  case .server(let message):
+                      return message
+                  case .failed(let message):
+                      return message
+                  }
+              }
+          }
+
+          actor VideoBackend {
+              static let shared = VideoBackend()
+
+              var isConfigured: Bool {
+                  !BackendConfig.baseURL.trimmingCharacters(
+                      in: .whitespacesAndNewlines
+                  ).isEmpty
+              }
+
+              private func makeURL(_ path: String) throws -> URL {
+                  guard isConfigured else {
+                      throw VideoBackendError.notConfigured
+                  }
+                  guard let root = URL(string: BackendConfig.baseURL) else {
+                      throw VideoBackendError.invalidURL
+                  }
+                  return root.appendingPathComponent(path)
+              }
+
+              private func makeRequest(
+                  path: String,
+                  method: String = "GET",
+                  body: [String: Any]? = nil
+              ) throws -> URLRequest {
+                  var req = URLRequest(url: try makeURL(path))
+                  req.httpMethod = method
+                  req.timeoutInterval = 90
+
+                  if !BackendConfig.token.isEmpty {
+                      req.setValue(
+                          "Bearer \(BackendConfig.token)",
+                          forHTTPHeaderField: "Authorization"
+                      )
+                  }
+
+                  if let body {
+                      req.setValue(
+                          "application/json",
+                          forHTTPHeaderField: "Content-Type"
+                      )
+                      req.httpBody = try JSONSerialization.data(
+                          withJSONObject: body
+                      )
+                  }
+
+                  return req
+              }
+
+              private func checkedData(
+                  _ req: URLRequest
+              ) async throws -> Data {
+                  let (data, response) = try await URLSession.shared.data(
+                      for: req
+                  )
+
+                  guard let http = response as? HTTPURLResponse else {
+                      throw VideoBackendError.server(
+                          "Backend вернул неизвестный ответ."
+                      )
+                  }
+
+                  guard (200...299).contains(http.statusCode) else {
+                      if let object = try? JSONSerialization.jsonObject(
+                          with: data
+                      ) as? [String: Any] {
+                          let message =
+                              object["error"] as? String
+                              ?? object["message"] as? String
+                              ?? "HTTP \(http.statusCode)"
+                          throw VideoBackendError.server(message)
+                      }
+
+                      throw VideoBackendError.server(
+                          "HTTP \(http.statusCode)"
+                      )
+                  }
+
+                  return data
+              }
+
+              func create(
+                  prompt: String,
+                  duration: Int,
+                  ratio: String,
+                  resolution: String,
+                  imageData: Data?
+              ) async throws -> BackendCreateResponse {
+                  var body: [String: Any] = [
+                      "prompt": prompt,
+                      "duration": duration,
+                      "ratio": ratio,
+                      "resolution": resolution
+                  ]
+
+                  if let imageData {
+                      body["image_base64"] = imageData.base64EncodedString()
+                  }
+
+                  let req = try makeRequest(
+                      path: "generate",
+                      method: "POST",
+                      body: body
+                  )
+
+                  let data = try await checkedData(req)
+                  return try JSONDecoder().decode(
+                      BackendCreateResponse.self,
+                      from: data
+                  )
+              }
+
+              func status(id: String) async throws -> BackendStatusResponse {
+                  let safeID = id.addingPercentEncoding(
+                      withAllowedCharacters: .urlPathAllowed
+                  ) ?? id
+
+                  let req = try makeRequest(
+                      path: "status/\(safeID)"
+                  )
+
+                  let data = try await checkedData(req)
+                  return try JSONDecoder().decode(
+                      BackendStatusResponse.self,
+                      from: data
+                  )
+              }
+
+              func wait(
+                  id: String,
+                  onProgress: @escaping @Sendable (Int, String) async -> Void
+              ) async throws -> BackendStatusResponse {
+                  while true {
+                      let state = try await status(id: id)
+                      await onProgress(
+                          state.progress ?? 0,
+                          state.status
+                      )
+
+                      switch state.status.lowercased() {
+                      case "completed", "done", "succeeded":
+                          return state
+
+                      case "failed", "error", "cancelled":
+                          throw VideoBackendError.failed(
+                              state.error ?? "Генерация завершилась ошибкой."
+                          )
+
+                      default:
+                          try await Task.sleep(
+                              nanoseconds: 3_000_000_000
+                          )
+                      }
+                  }
+              }
+
+              func download(
+                  id: String,
+                  resultURL: String?
+              ) async throws -> URL {
+                  let source: URL
+
+                  if let resultURL,
+                     let direct = URL(string: resultURL) {
+                      source = direct
+                  } else {
+                      let safeID = id.addingPercentEncoding(
+                          withAllowedCharacters: .urlPathAllowed
+                      ) ?? id
+                      source = try makeURL("result/\(safeID)")
+                  }
+
+                  var req = URLRequest(url: source)
+                  req.timeoutInterval = 180
+
+                  if !BackendConfig.token.isEmpty,
+                     source.absoluteString.hasPrefix(BackendConfig.baseURL) {
+                      req.setValue(
+                          "Bearer \(BackendConfig.token)",
+                          forHTTPHeaderField: "Authorization"
+                      )
+                  }
+
+                  let (temp, response) = try await URLSession.shared.download(
+                      for: req
+                  )
+
+                  guard let http = response as? HTTPURLResponse,
+                        (200...299).contains(http.statusCode) else {
+                      throw VideoBackendError.server(
+                          "Не удалось скачать готовый MP4."
+                      )
+                  }
+
+                  let output = FileManager.default.temporaryDirectory
+                      .appendingPathComponent("\(UUID().uuidString).mp4")
+
+                  if FileManager.default.fileExists(atPath: output.path) {
+                      try FileManager.default.removeItem(at: output)
+                  }
+
+                  try FileManager.default.moveItem(
+                      at: temp,
+                      to: output
+                  )
+
+                  return output
+              }
+          }
 
           @main
           struct ProjectSora2App: App {
@@ -1292,6 +1542,70 @@ jobs:
                               }
                               .padding(.vertical, 6)
 
+                              VStack(alignment: .leading, spacing: 12) {
+                                  HStack {
+                                      Text("Мои видео")
+                                          .font(.system(size: 19, weight: .bold))
+                                          .foregroundStyle(.white)
+
+                                      Spacer()
+
+                                      Text("\(model.localVideos.count)")
+                                          .font(.system(size: 13, weight: .bold))
+                                          .foregroundStyle(.white.opacity(0.45))
+                                  }
+
+                                  if model.localVideos.isEmpty {
+                                      Text("Готовые ролики будут храниться здесь.")
+                                          .font(.system(size: 14))
+                                          .foregroundStyle(.white.opacity(0.46))
+                                          .frame(maxWidth: .infinity, alignment: .leading)
+                                          .padding(14)
+                                          .background(.white.opacity(0.05))
+                                          .clipShape(
+                                              RoundedRectangle(
+                                                  cornerRadius: 17,
+                                                  style: .continuous
+                                              )
+                                          )
+                                  } else {
+                                      ForEach(model.localVideos.prefix(5)) { video in
+                                          HStack(spacing: 12) {
+                                              Image(systemName: "play.rectangle.fill")
+                                                  .font(.system(size: 24))
+                                                  .foregroundStyle(.white)
+
+                                              VStack(alignment: .leading, spacing: 3) {
+                                                  Text(video.prompt)
+                                                      .font(.system(size: 14, weight: .bold))
+                                                      .foregroundStyle(.white)
+                                                      .lineLimit(1)
+
+                                                  Text(
+                                                      video.createdAt.formatted(
+                                                          date: .abbreviated,
+                                                          time: .shortened
+                                                      )
+                                                  )
+                                                  .font(.system(size: 11))
+                                                  .foregroundStyle(.white.opacity(0.42))
+                                              }
+
+                                              Spacer()
+                                          }
+                                          .padding(12)
+                                          .background(.white.opacity(0.05))
+                                          .clipShape(
+                                              RoundedRectangle(
+                                                  cornerRadius: 17,
+                                                  style: .continuous
+                                              )
+                                          )
+                                      }
+                                  }
+                              }
+                              .frame(maxWidth: .infinity, alignment: .leading)
+
                               Button {
                                   showIcons = true
                               } label: {
@@ -1536,19 +1850,21 @@ jobs:
           struct CreateVideoView: View {
               @Environment(\.dismiss) private var dismiss
               @EnvironmentObject var model: AppModel
-              @Environment(\.scenePhase) private var scenePhase
 
               @State private var prompt = ""
               @State private var photoItem: PhotosPickerItem?
-              @State private var hasPhoto = false
-              @State private var duration = "10 сек"
+              @State private var photoData: Data?
+              @State private var duration = 10
               @State private var ratio = "9:16"
+              @State private var resolution = "1080p"
 
-              @State private var showMovieImporter = false
+              @State private var isGenerating = false
+              @State private var generationProgress = 0
+              @State private var generationStatus = ""
               @State private var dialogTitle = ""
               @State private var dialogMessage = ""
               @State private var showDialog = false
-              @State private var waitingForDola = false
+              @State private var showMovieImporter = false
 
               var body: some View {
                   NavigationStack {
@@ -1558,7 +1874,9 @@ jobs:
                           VStack(spacing: 0) {
                               HStack {
                                   Button {
-                                      dismiss()
+                                      if !isGenerating {
+                                          dismiss()
+                                      }
                                   } label: {
                                       Image(systemName: "xmark")
                                           .font(.system(size: 18, weight: .bold))
@@ -1567,20 +1885,21 @@ jobs:
                                           .background(.white.opacity(0.08))
                                           .clipShape(Circle())
                                   }
+                                  .disabled(isGenerating)
 
                                   Spacer()
 
                                   VStack(spacing: 1) {
                                       Text("Создать видео")
                                           .font(.system(size: 18, weight: .bold))
-                                      Text("Seedance 2.5 • Dola Bridge")
+
+                                      Text("Project Sora 2")
                                           .font(.system(size: 12, weight: .medium))
                                           .foregroundStyle(.white.opacity(0.46))
                                   }
                                   .foregroundStyle(.white)
 
                                   Spacer()
-
                                   Color.clear.frame(width: 40, height: 40)
                               }
                               .padding(.horizontal, 16)
@@ -1619,6 +1938,7 @@ jobs:
                                           .padding(.horizontal, 12)
                                           .padding(.top, 9)
                                           .padding(.bottom, 64)
+                                          .disabled(isGenerating)
 
                                       HStack(spacing: 9) {
                                           PhotosPicker(
@@ -1627,7 +1947,7 @@ jobs:
                                           ) {
                                               HStack(spacing: 6) {
                                                   Image(systemName: "photo")
-                                                  Text(hasPhoto ? "Фото ✓" : "Фото")
+                                                  Text(photoData == nil ? "Фото" : "Фото ✓")
                                               }
                                               .font(.system(size: 14, weight: .semibold))
                                               .foregroundStyle(.white)
@@ -1636,10 +1956,11 @@ jobs:
                                               .background(.white.opacity(0.09))
                                               .clipShape(Capsule())
                                           }
+                                          .disabled(isGenerating)
 
                                           Spacer()
 
-                                          Image(systemName: "wand.and.stars")
+                                          Image(systemName: "waveform")
                                               .foregroundStyle(.white.opacity(0.70))
                                               .frame(width: 38, height: 38)
                                               .background(.white.opacity(0.09))
@@ -1647,18 +1968,18 @@ jobs:
                                       }
                                       .padding(.horizontal, 13)
                                       .padding(.bottom, 11)
-                                      .frame(
-                                          maxHeight: .infinity,
-                                          alignment: .bottom
-                                      )
+                                      .frame(maxHeight: .infinity, alignment: .bottom)
                                   }
                                   .frame(height: 220)
 
                                   HStack(spacing: 8) {
-                                      SelectorChip(title: duration) {
-                                          duration = duration == "10 сек"
-                                              ? "30 сек"
-                                              : "10 сек"
+                                      SelectorChip(title: "\(duration) сек") {
+                                          switch duration {
+                                          case 5: duration = 10
+                                          case 10: duration = 15
+                                          case 15: duration = 30
+                                          default: duration = 5
+                                          }
                                       }
 
                                       SelectorChip(title: ratio) {
@@ -1667,41 +1988,58 @@ jobs:
                                               : (ratio == "16:9" ? "1:1" : "9:16")
                                       }
 
+                                      SelectorChip(title: resolution) {
+                                          resolution = resolution == "1080p"
+                                              ? "720p"
+                                              : "1080p"
+                                      }
+
                                       Spacer()
                                   }
+                                  .disabled(isGenerating)
 
-                                  VStack(alignment: .leading, spacing: 8) {
-                                      Label(
-                                          "1. Нажми «Создать в Dola»",
-                                          systemImage: "1.circle.fill"
-                                      )
-                                      Label(
-                                          "2. Выбери Seedance 2.5 и вставь скопированный промпт",
-                                          systemImage: "2.circle.fill"
-                                      )
-                                      Label(
-                                          "3. Скачай MP4 и вернись сюда",
-                                          systemImage: "3.circle.fill"
+                                  if isGenerating {
+                                      VStack(spacing: 9) {
+                                          HStack {
+                                              Text(generationStatus)
+                                                  .font(.system(size: 14, weight: .semibold))
+                                                  .foregroundStyle(.white)
+
+                                              Spacer()
+
+                                              Text("\(generationProgress)%")
+                                                  .font(.system(size: 14, weight: .bold))
+                                                  .foregroundStyle(.white.opacity(0.58))
+                                          }
+
+                                          ProgressView(
+                                              value: Double(generationProgress),
+                                              total: 100
+                                          )
+                                          .tint(.white)
+                                      }
+                                      .padding(14)
+                                      .background(.white.opacity(0.06))
+                                      .clipShape(
+                                          RoundedRectangle(
+                                              cornerRadius: 18,
+                                              style: .continuous
+                                          )
                                       )
                                   }
-                                  .font(.system(size: 12, weight: .medium))
-                                  .foregroundStyle(.white.opacity(0.58))
-                                  .frame(maxWidth: .infinity, alignment: .leading)
-                                  .padding(14)
-                                  .background(.white.opacity(0.055))
-                                  .clipShape(
-                                      RoundedRectangle(
-                                          cornerRadius: 18,
-                                          style: .continuous
-                                      )
-                                  )
 
                                   Button {
-                                      openDola()
+                                      startGeneration()
                                   } label: {
-                                      HStack(spacing: 9) {
-                                          Image(systemName: "sparkles")
-                                          Text("Создать в Dola")
+                                      HStack(spacing: 8) {
+                                          if isGenerating {
+                                              ProgressView()
+                                                  .tint(.black)
+                                          } else {
+                                              Image(systemName: "sparkles")
+                                          }
+
+                                          Text(isGenerating ? "Генерация…" : "Создать")
                                       }
                                       .font(.system(size: 18, weight: .bold))
                                       .foregroundStyle(.black)
@@ -1711,6 +2049,7 @@ jobs:
                                       .clipShape(Capsule())
                                   }
                                   .disabled(
+                                      isGenerating ||
                                       prompt.trimmingCharacters(
                                           in: .whitespacesAndNewlines
                                       ).isEmpty
@@ -1724,17 +2063,18 @@ jobs:
                                   Button {
                                       showMovieImporter = true
                                   } label: {
-                                      HStack(spacing: 9) {
-                                          Image(systemName: "square.and.arrow.down.fill")
-                                          Text("Импортировать готовое видео")
+                                      HStack(spacing: 8) {
+                                          Image(systemName: "film.fill")
+                                          Text("Импортировать MP4 для теста")
                                       }
-                                      .font(.system(size: 15, weight: .bold))
+                                      .font(.system(size: 14, weight: .bold))
                                       .foregroundStyle(.white)
                                       .frame(maxWidth: .infinity)
-                                      .frame(height: 48)
-                                      .background(.white.opacity(0.09))
+                                      .frame(height: 46)
+                                      .background(.white.opacity(0.08))
                                       .clipShape(Capsule())
                                   }
+                                  .disabled(isGenerating)
                               }
                               .padding(.horizontal, 16)
                               .padding(.bottom, 20)
@@ -1742,20 +2082,11 @@ jobs:
                       }
                       .task(id: photoItem) {
                           if let photoItem {
-                              let data = try? await photoItem.loadTransferable(
+                              photoData = try? await photoItem.loadTransferable(
                                   type: Data.self
                               )
-                              hasPhoto = data != nil
-                          }
-                      }
-                      .onChange(of: scenePhase) { newPhase in
-                          if newPhase == .active && waitingForDola {
-                              waitingForDola = false
-
-                              dialogTitle = "Вернулся из Dola?"
-                              dialogMessage =
-                                  "Если видео уже готово и скачано, нажми «Импортировать готовое видео». Оно сразу появится в ленте и в профиле."
-                              showDialog = true
+                          } else {
+                              photoData = nil
                           }
                       }
                       .fileImporter(
@@ -1772,9 +2103,10 @@ jobs:
                                       from: url,
                                       prompt: prompt
                                   )
+
                                   dialogTitle = "Видео добавлено"
                                   dialogMessage =
-                                      "MP4 сохранён внутри Project Sora 2 и уже появился в ленте и профиле."
+                                      "MP4 уже находится в ленте и в «Профиль → Мои видео»."
                                   showDialog = true
                               } catch {
                                   dialogTitle = "Ошибка импорта"
@@ -1783,14 +2115,15 @@ jobs:
                               }
 
                           case .failure(let error):
-                              dialogTitle = "Ошибка выбора видео"
+                              dialogTitle = "Ошибка выбора файла"
                               dialogMessage = error.localizedDescription
                               showDialog = true
                           }
                       }
                       .alert(dialogTitle, isPresented: $showDialog) {
                           Button("ОК") {
-                              if dialogTitle == "Видео добавлено" {
+                              if dialogTitle == "Видео готово" ||
+                                 dialogTitle == "Видео добавлено" {
                                   dismiss()
                               }
                           }
@@ -1800,47 +2133,95 @@ jobs:
                   }
               }
 
-              private func openDola() {
+              private func startGeneration() {
                   let clean = prompt.trimmingCharacters(
                       in: .whitespacesAndNewlines
                   )
+
                   guard !clean.isEmpty else { return }
 
-                  // Dola client receives the exact generation parameters from its own server.
-                  // We only pass the prompt via clipboard; no Dola tokens/cookies are copied.
-                  UIPasteboard.general.string = clean
+                  isGenerating = true
+                  generationProgress = 0
+                  generationStatus = "Подключаем генератор…"
 
-                  waitingForDola = true
+                  Task {
+                      do {
+                          let configured = await VideoBackend.shared.isConfigured
 
-                  let candidates = [
-                      "cici://flow/open_video",
-                      "cici://open_video"
-                  ]
-
-                  func tryURL(_ index: Int) {
-                      guard index < candidates.count else {
-                          if let web = URL(string: "https://www.dola.com") {
-                              UIApplication.shared.open(web)
+                          guard configured else {
+                              throw VideoBackendError.notConfigured
                           }
-                          return
-                      }
 
-                      guard let url = URL(string: candidates[index]) else {
-                          tryURL(index + 1)
-                          return
-                      }
+                          let created = try await VideoBackend.shared.create(
+                              prompt: clean,
+                              duration: duration,
+                              ratio: ratio,
+                              resolution: resolution,
+                              imageData: photoData
+                          )
 
-                      UIApplication.shared.open(
-                          url,
-                          options: [:]
-                      ) { success in
-                          if !success {
-                              tryURL(index + 1)
+                          await MainActor.run {
+                              generationProgress = 1
+                              generationStatus = "В очереди…"
+                          }
+
+                          let completed = try await VideoBackend.shared.wait(
+                              id: created.id
+                          ) { progress, status in
+                              await MainActor.run {
+                                  generationProgress = max(
+                                      0,
+                                      min(100, progress)
+                                  )
+
+                                  switch status.lowercased() {
+                                  case "queued":
+                                      generationStatus = "В очереди…"
+                                  case "processing", "generating":
+                                      generationStatus = "Генерация…"
+                                  default:
+                                      generationStatus = "Обработка…"
+                                  }
+                              }
+                          }
+
+                          await MainActor.run {
+                              generationProgress = 100
+                              generationStatus = "Скачиваем MP4…"
+                          }
+
+                          let video = try await VideoBackend.shared.download(
+                              id: completed.id,
+                              resultURL: completed.result_url
+                          )
+
+                          _ = try model.importVideo(
+                              from: video,
+                              prompt: clean
+                          )
+
+                          await MainActor.run {
+                              isGenerating = false
+                              dialogTitle = "Видео готово"
+                              dialogMessage =
+                                  "Готовый MP4 автоматически добавлен в ленту и в «Профиль → Мои видео»."
+                              showDialog = true
+                          }
+
+                      } catch {
+                          await MainActor.run {
+                              isGenerating = false
+                              generationStatus = ""
+                              dialogTitle = "Генератор не подключён"
+                              dialogMessage =
+                                  error.localizedDescription
+                                  + "
+
+Интерфейс уже полностью готов. Когда подключим backend, менять IPA-логику генерации больше не придётся."
+                              showDialog = true
                           }
                       }
                   }
-
-                  tryURL(0)
               }
           }
 
@@ -2101,16 +2482,16 @@ jobs:
           mkdir -p Payload output
           cp -R "$APP" Payload/
 
-          /usr/bin/zip -qry output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa Payload
+          /usr/bin/zip -qry output/Project-Sora-2-v1.1-Final-Backend-Ready.ipa Payload
 
-          unzip -t output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
-          ls -lh output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
+          unzip -t output/Project-Sora-2-v1.1-Final-Backend-Ready.ipa
+          ls -lh output/Project-Sora-2-v1.1-Final-Backend-Ready.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.10-Dola-Seedance-Bridge-IPA
-          path: output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
+          name: Project-Sora-2-v1.1-Final-Backend-Ready-IPA
+          path: output/Project-Sora-2-v1.1-Final-Backend-Ready.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -2118,6 +2499,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.10-build-log
+          name: Project-Sora-2-v1.1-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
