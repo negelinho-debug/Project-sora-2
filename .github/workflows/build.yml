@@ -1,4 +1,4 @@
-name: Build Project Sora 2 v1.1 Final Backend Ready
+name: build
 
 on:
   workflow_dispatch:
@@ -2215,9 +2215,7 @@ jobs:
                               dialogTitle = "Генератор не подключён"
                               dialogMessage =
                                   error.localizedDescription
-                                  + "
-
-Интерфейс уже полностью готов. Когда подключим backend, менять IPA-логику генерации больше не придётся."
+                                  + "\\n\\nИнтерфейс уже полностью готов. Когда подключим backend, менять IPA-логику генерации больше не придётся."
                               showDialog = true
                           }
                       }
