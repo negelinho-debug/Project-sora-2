@@ -1,4 +1,4 @@
-name: Build Project Sora 2 v0.9 Video Engine
+name: Build Project Sora 2 v0.10 Dola Seedance Bridge
 
 on:
   workflow_dispatch:
@@ -84,9 +84,9 @@ jobs:
               <key>CFBundlePackageType</key>
               <string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
               <key>CFBundleShortVersionString</key>
-              <string>0.9</string>
+              <string>0.10</string>
               <key>CFBundleVersion</key>
-              <string>9</string>
+              <string>10</string>
 
               <key>LSRequiresIPhoneOS</key>
               <true/>
@@ -94,6 +94,10 @@ jobs:
               <string>Выберите фото для создания видео</string>
               <key>NSPhotoLibraryAddUsageDescription</key>
               <string>Сохраняйте готовые видео Project Sora 2 в Фото</string>
+              <key>LSApplicationQueriesSchemes</key>
+              <array>
+                  <string>cici</string>
+              </array>
               <key>UILaunchScreen</key>
               <dict/>
               <key>UISupportedInterfaceOrientations</key>
@@ -1532,19 +1536,19 @@ jobs:
           struct CreateVideoView: View {
               @Environment(\.dismiss) private var dismiss
               @EnvironmentObject var model: AppModel
+              @Environment(\.scenePhase) private var scenePhase
 
               @State private var prompt = ""
               @State private var photoItem: PhotosPickerItem?
               @State private var hasPhoto = false
               @State private var duration = "10 сек"
               @State private var ratio = "9:16"
-              @State private var quality = "1080p"
-              @State private var cameo = false
 
               @State private var showMovieImporter = false
               @State private var dialogTitle = ""
               @State private var dialogMessage = ""
               @State private var showDialog = false
+              @State private var waitingForDola = false
 
               var body: some View {
                   NavigationStack {
@@ -1569,7 +1573,7 @@ jobs:
                                   VStack(spacing: 1) {
                                       Text("Создать видео")
                                           .font(.system(size: 18, weight: .bold))
-                                      Text("Sora 2 • Video Engine")
+                                      Text("Seedance 2.5 • Dola Bridge")
                                           .font(.system(size: 12, weight: .medium))
                                           .foregroundStyle(.white.opacity(0.46))
                                   }
@@ -1633,28 +1637,9 @@ jobs:
                                               .clipShape(Capsule())
                                           }
 
-                                          Button {
-                                              cameo.toggle()
-                                          } label: {
-                                              HStack(spacing: 6) {
-                                                  Image(systemName: "person.2.fill")
-                                                  Text("Камео")
-                                              }
-                                              .font(.system(size: 14, weight: .semibold))
-                                              .foregroundStyle(.white)
-                                              .padding(.horizontal, 12)
-                                              .frame(height: 38)
-                                              .background(
-                                                  cameo
-                                                  ? .white.opacity(0.20)
-                                                  : .white.opacity(0.09)
-                                              )
-                                              .clipShape(Capsule())
-                                          }
-
                                           Spacer()
 
-                                          Image(systemName: "waveform")
+                                          Image(systemName: "wand.and.stars")
                                               .foregroundStyle(.white.opacity(0.70))
                                               .frame(width: 38, height: 38)
                                               .background(.white.opacity(0.09))
@@ -1672,7 +1657,7 @@ jobs:
                                   HStack(spacing: 8) {
                                       SelectorChip(title: duration) {
                                           duration = duration == "10 сек"
-                                              ? "5 сек"
+                                              ? "30 сек"
                                               : "10 сек"
                                       }
 
@@ -1682,58 +1667,72 @@ jobs:
                                               : (ratio == "16:9" ? "1:1" : "9:16")
                                       }
 
-                                      SelectorChip(title: quality) {
-                                          quality = quality == "1080p"
-                                              ? "720p"
-                                              : "1080p"
-                                      }
-
                                       Spacer()
                                   }
 
+                                  VStack(alignment: .leading, spacing: 8) {
+                                      Label(
+                                          "1. Нажми «Создать в Dola»",
+                                          systemImage: "1.circle.fill"
+                                      )
+                                      Label(
+                                          "2. Выбери Seedance 2.5 и вставь скопированный промпт",
+                                          systemImage: "2.circle.fill"
+                                      )
+                                      Label(
+                                          "3. Скачай MP4 и вернись сюда",
+                                          systemImage: "3.circle.fill"
+                                      )
+                                  }
+                                  .font(.system(size: 12, weight: .medium))
+                                  .foregroundStyle(.white.opacity(0.58))
+                                  .frame(maxWidth: .infinity, alignment: .leading)
+                                  .padding(14)
+                                  .background(.white.opacity(0.055))
+                                  .clipShape(
+                                      RoundedRectangle(
+                                          cornerRadius: 18,
+                                          style: .continuous
+                                      )
+                                  )
+
                                   Button {
-                                      showMovieImporter = true
+                                      openDola()
                                   } label: {
                                       HStack(spacing: 9) {
-                                          Image(systemName: "film.fill")
-                                          Text("Добавить готовое видео в ленту")
-                                      }
-                                      .font(.system(size: 15, weight: .bold))
-                                      .foregroundStyle(.white)
-                                      .frame(maxWidth: .infinity)
-                                      .frame(height: 48)
-                                      .background(.white.opacity(0.09))
-                                      .clipShape(Capsule())
-                                  }
-
-                                  Text(
-                                      "Импорт MP4 уже работает. Кнопка «Создать» подготовлена под настоящий backend/API и не выдаёт заглушку за сгенерированное видео."
-                                  )
-                                  .font(.system(size: 11))
-                                  .foregroundStyle(.white.opacity(0.34))
-                                  .multilineTextAlignment(.center)
-                                  .padding(.horizontal, 14)
-
-                                  Button {
-                                      model.recordCreate(
-                                          prompt: prompt,
-                                          hasPhoto: hasPhoto
-                                      )
-
-                                      dialogTitle = "Генератор готов к подключению"
-                                      dialogMessage =
-                                          "Интерфейс и очередь готовы. Для настоящей AI-генерации нужен backend/API видеомодели. Пока можешь импортировать готовый MP4 и полностью проверить ленту, проигрывание и сохранение."
-                                      showDialog = true
-                                  } label: {
-                                      HStack(spacing: 8) {
                                           Image(systemName: "sparkles")
-                                          Text("Создать")
+                                          Text("Создать в Dola")
                                       }
                                       .font(.system(size: 18, weight: .bold))
                                       .foregroundStyle(.black)
                                       .frame(maxWidth: .infinity)
                                       .frame(height: 58)
                                       .background(.white)
+                                      .clipShape(Capsule())
+                                  }
+                                  .disabled(
+                                      prompt.trimmingCharacters(
+                                          in: .whitespacesAndNewlines
+                                      ).isEmpty
+                                  )
+                                  .opacity(
+                                      prompt.trimmingCharacters(
+                                          in: .whitespacesAndNewlines
+                                      ).isEmpty ? 0.45 : 1
+                                  )
+
+                                  Button {
+                                      showMovieImporter = true
+                                  } label: {
+                                      HStack(spacing: 9) {
+                                          Image(systemName: "square.and.arrow.down.fill")
+                                          Text("Импортировать готовое видео")
+                                      }
+                                      .font(.system(size: 15, weight: .bold))
+                                      .foregroundStyle(.white)
+                                      .frame(maxWidth: .infinity)
+                                      .frame(height: 48)
+                                      .background(.white.opacity(0.09))
                                       .clipShape(Capsule())
                                   }
                               }
@@ -1747,6 +1746,16 @@ jobs:
                                   type: Data.self
                               )
                               hasPhoto = data != nil
+                          }
+                      }
+                      .onChange(of: scenePhase) { newPhase in
+                          if newPhase == .active && waitingForDola {
+                              waitingForDola = false
+
+                              dialogTitle = "Вернулся из Dola?"
+                              dialogMessage =
+                                  "Если видео уже готово и скачано, нажми «Импортировать готовое видео». Оно сразу появится в ленте и в профиле."
+                              showDialog = true
                           }
                       }
                       .fileImporter(
@@ -1765,7 +1774,7 @@ jobs:
                                   )
                                   dialogTitle = "Видео добавлено"
                                   dialogMessage =
-                                      "Настоящий видеофайл скопирован внутрь Sora 2 и теперь отображается в ленте."
+                                      "MP4 сохранён внутри Project Sora 2 и уже появился в ленте и профиле."
                                   showDialog = true
                               } catch {
                                   dialogTitle = "Ошибка импорта"
@@ -1789,6 +1798,49 @@ jobs:
                           Text(dialogMessage)
                       }
                   }
+              }
+
+              private func openDola() {
+                  let clean = prompt.trimmingCharacters(
+                      in: .whitespacesAndNewlines
+                  )
+                  guard !clean.isEmpty else { return }
+
+                  // Dola client receives the exact generation parameters from its own server.
+                  // We only pass the prompt via clipboard; no Dola tokens/cookies are copied.
+                  UIPasteboard.general.string = clean
+
+                  waitingForDola = true
+
+                  let candidates = [
+                      "cici://flow/open_video",
+                      "cici://open_video"
+                  ]
+
+                  func tryURL(_ index: Int) {
+                      guard index < candidates.count else {
+                          if let web = URL(string: "https://www.dola.com") {
+                              UIApplication.shared.open(web)
+                          }
+                          return
+                      }
+
+                      guard let url = URL(string: candidates[index]) else {
+                          tryURL(index + 1)
+                          return
+                      }
+
+                      UIApplication.shared.open(
+                          url,
+                          options: [:]
+                      ) { success in
+                          if !success {
+                              tryURL(index + 1)
+                          }
+                      }
+                  }
+
+                  tryURL(0)
               }
           }
 
@@ -2049,16 +2101,16 @@ jobs:
           mkdir -p Payload output
           cp -R "$APP" Payload/
 
-          /usr/bin/zip -qry output/Project-Sora-2-v0.9-Video-Engine.ipa Payload
+          /usr/bin/zip -qry output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa Payload
 
-          unzip -t output/Project-Sora-2-v0.9-Video-Engine.ipa
-          ls -lh output/Project-Sora-2-v0.9-Video-Engine.ipa
+          unzip -t output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
+          ls -lh output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.9-Video-Engine-IPA
-          path: output/Project-Sora-2-v0.9-Video-Engine.ipa
+          name: Project-Sora-2-v0.10-Dola-Seedance-Bridge-IPA
+          path: output/Project-Sora-2-v0.10-Dola-Seedance-Bridge.ipa
           if-no-files-found: error
           compression-level: 0
 
@@ -2066,6 +2118,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Project-Sora-2-v0.9-build-log
+          name: Project-Sora-2-v0.10-build-log
           path: xcodebuild.log
           if-no-files-found: ignore
